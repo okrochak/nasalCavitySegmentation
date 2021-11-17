@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# General configuration of the job
+#SBATCH --job-name=TorchTest
+#SBATCH --account=prcoe12
+#SBATCH --mail-user=
+#SBATCH --mail-type=ALL
+#SBATCH --output=job.out
+#SBATCH --error=job.err
+#SBATCH --time=01:00:00
+
+# Configure node and process count on the CM
+#SBATCH --partition=develbooster
+#SBATCH --nodes=2
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=1
+#SBATCH --exclusive
+
+# file to execute
+COMMAND="Autoencoder_Turbulence.py --batch_size 100 --epochs 10 --learning_rate 0.0001"
+
+# debug features
+debug=false
+
+# Set the environment
+module --force purge
+ml GCC ParaStationMPI Python
+
+# source env
+source /p/project/prcoe12/RAISE/envAI_juwels/bin/activate
+
+# sleep a sec
+sleep 1
+
+# Echo job configuration
+if [ "$debug" = true ] ; then
+   echo "DEBUG: SLURM_JOB_NODELIST=$SLURM_JOB_NODELIST"
+   echo "DEBUG: SLURM_NNODES=$SLURM_NNODES"
+   echo "DEBUG: SLURM_NTASKS=$SLURM_NTASKS"
+   echo "DEBUG: SLURM_TASKS_PER_NODE=$SLURM_TASKS_PER_NODE"
+   echo "DEBUG: SLURM_SUBMIT_HOST=$SLURM_SUBMIT_HOST"
+   echo "DEBUG: SLURM_NODEID=$SLURM_NODEID"
+   echo "DEBUG: SLURM_LOCALID=$SLURM_LOCALID" 
+   echo "DEBUG: SLURM_PROCID=$SLURM_PROCID"
+fi
+
+# set comm
+PSP_CUDA=1
+PSP_UCP=1 
+export NCCL_SOCKET_IFNAME=ib
+export NCCL_IB_HCA=ipogif0 
+export NCCL_IB_CUDA_SUPPORT=1
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
+if [ "$debug" = true ] ; then
+  export NCCL_DEBUG=VERSION
+  export NCCL_DEBUG=INFO
+  export NCCL_DEBUG_SUBSYS=ALL
+fi
+
+# launch
+srun --cpu-bind=none python -m torch.distributed.run $COMMAND
+
+# eof

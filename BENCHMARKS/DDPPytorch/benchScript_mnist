@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# general configuration of the job
+#SBATCH --job-name=TorchTest
+#SBATCH --account=deepext
+#SBATCH --mail-user=
+#SBATCH --mail-type=ALL
+#SBATCH --output=job.out
+#SBATCH --error=job.err
+#SBATCH --time=06:00:00
+
+# configure node and process count on the CM
+#SBATCH --partition=dp-esb-ib
+#SBATCH --nodes=#NODES#
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --gpus-per-node=1
+#SBATCH --exclusive
+
+# command to exec
+be='nccl'
+dataDir="/p/project/prcoe12/RAISE/data_MNIST/"
+COMMAND="DDP_pytorch_mnist.py \
+        --batch-size #BS# \
+        --epochs #EPCS# \
+        --concM #CMS# \
+        --data-dir $dataDir \
+        --benchrun \
+        --backend $be \
+        --nworker #NW# \
+        --prefetch #PF#"
+
+echo "DEBUG: EXECUTE=$COMMAND"
+
+# set modules
+ml GCC ParaStationMPI/5.4.9-1-mt Python cuDNN NCCL Python
+
+# set env
+source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate
+
+# sleep a sec
+sleep 1
+
+# job info 
+echo "DEBUG: SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
+echo "DEBUG: SLURM_NNODES: $SLURM_NNODES"
+echo "DEBUG: SLURM_NTASKS: $SLURM_NTASKS"
+echo "DEBUG: SLURM_TASKS_PER_NODE: $SLURM_TASKS_PER_NODE"
+echo "DEBUG: SLURM_SUBMIT_HOST: $SLURM_SUBMIT_HOST"
+echo "DEBUG: SLURM_NODEID: $SLURM_NODEID"
+echo "DEBUG: SLURM_LOCALID: $SLURM_LOCALID"
+echo "DEBUG: SLURM_PROCID: $SLURM_PROCID"
+
+# set comm
+export CUDA_VISIBLE_DEVICES="0"
+
+# launch
+srun python3 -m torch.distributed.run \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=$SLURM_GPUS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$SLURMD_NODENAME:29400 \
+    $COMMAND
+
+touch #READY#
+
+# eof

@@ -1,0 +1,6 @@
+torch==1.9.0+rocm4.0.1
+torchvision==0.10.0
+matplotlib==3.4.3
+pyyaml==5.4.1
+wheel==0.37.0
+h5py==3.4.0

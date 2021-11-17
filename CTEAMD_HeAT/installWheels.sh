@@ -1,0 +1,39 @@
+#!/bin/bash
+# -*- coding: utf-8 -*-
+# author: EI
+# version: 210917a
+# install wheels, JUBE, torch and HeAT
+
+# parameters
+nameE=envAI_BSC
+
+# get pwd 
+cDir=$PWD
+wDir=/gpfs/projects/bsc21/bsc21163/wheels
+
+# set modules
+ml bsc gcc openmpi rocm python cmake
+
+# activate env
+source $cDir/$nameE/bin/activate
+export LD_LIBRARY_PATH=$cDir/$nameE/lib:$LD_LIBRARY_PATH
+
+# install torch for horovod
+pip3.9 install --no-index --find-links $wDir -r reqs.txt
+
+# install JUBE 
+if [ -f "$cDir/$nameE/bin/jube" ];then
+   echo 'JUBE is already installed!'
+else
+   cd $wDir
+   tar xzf JUBE-2.4.1.tar.gz
+   cd JUBE-2.4.1
+   python3.9 setup.py install
+   cd ..
+   rm -rf JUBE-2.4.1
+fi
+
+# install heAT
+pip3.9 install --no-cache-dir --no-index --find-links $wDir $wDir/heat-1.1.1_mod.tar.gz[hdf5,netcdf] --force-reinstall
+
+#eof
