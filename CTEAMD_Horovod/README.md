@@ -10,6 +10,7 @@ use git commands in <local_folder>
 2. to setup Horovod \
 `pip download -r reqHor.txt`\
  on your local machine to get the necessary wheels, and transfer them to CTEAMD with method in #1
+3. TBL datasets are moved to `/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/`
 
 # current isues
 1.

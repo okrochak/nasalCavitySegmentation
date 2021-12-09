@@ -9,6 +9,7 @@ https://github.com/ROCmSoftwarePlatform?language=python
 `sshfs -o workaround=rename <user_name>@dt01.bsc.es: <local_folder>`\
 use git commands in <local_folder>
 3. to add new python libraries; (a) download wheels (.whl) or tarbals from https://pypi.org/ (only cp39 works) from local machine to CTEAMD with method above in #1, (b) copy the item to wheels folder (/gpfs/projects/bsc21/bsc21163/wheels), (c) update the `regs.txt` file in the project folder (/gpfs/projects/bsc21/bsc21163), and (d) run ./installWheels.sh in the project folder
+4. TBL datasets are moved to `/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/`
 
 # current isues
 1. compiling DS with all options gives recursion error! Current options are fine.

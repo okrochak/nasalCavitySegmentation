@@ -31,11 +31,11 @@ li=1        # do log interval
 bs=96       # batch-size
 
 # MNIST
-#dataDir='/gpfs/projects/bsc21/bsc21163/data_MNIST/'
+#dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
 #COMMAND="DS_pytorch_mnist.py"
 
 # AT
-dataDir='/gpfs/projects/bsc21/bsc21163/T31/'
+dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/'
 COMMAND="DS_pytorch_AT.py"
 
 EXEC=$COMMAND" --batch-size $bs

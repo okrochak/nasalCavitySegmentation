@@ -12,6 +12,7 @@ from local machine to CTEAMD, use method above in #1\
 copy the item to wheels folder (/gpfs/projects/bsc21/bsc21163/wheels)\
 update the `regs.txt` file in the project folder (/gpfs/projects/bsc21/bsc21163)\
 run ./installWheels.sh in the project folder
+3. TBL datasets are moved to `/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/`
 
 # current isues
 1. concat is not working 

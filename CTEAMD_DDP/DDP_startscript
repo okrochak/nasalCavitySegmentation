@@ -30,15 +30,15 @@ ri=10       # do restart interval
 li=10       # do log interval
 
 # MNIST
-#dataDir='/gpfs/projects/bsc21/bsc21163/data_MNIST/'
+#dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
 #COMMAND="DDP_pytorch_mnist.py"
 
 # AT VAE
-#dataDir='/gpfs/projects/bsc21/bsc21163/T31_LD/'
+#dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/'
 #COMMAND="DDP_pytorch_AT_VAE.py"
 
 ## AT
-dataDir='/gpfs/projects/bsc21/bsc21163/T31_LD/'
+dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31_LD/'
 COMMAND="DDP_pytorch_AT_LD.py"
 
 EXEC=$COMMAND" --batch-size $bs

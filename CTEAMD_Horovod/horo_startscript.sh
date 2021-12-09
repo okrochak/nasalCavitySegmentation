@@ -24,10 +24,10 @@ epochs=1    # epochs
 cm=10       # data-size (concat dataset for MNIST)
 
 # MNIST
-dataDir='/gpfs/projects/bsc21/bsc21163/data_MNIST/'
+dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
 COMMAND="horo_pytorch_mnist.py"
 
-#dataDir='/gpfs/projects/bsc21/bsc21163/T31/'
+#dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/'
 #COMMAND="horo_pytorch_AT.py"
 
 EXEC=$COMMAND" --batch-size $bs 

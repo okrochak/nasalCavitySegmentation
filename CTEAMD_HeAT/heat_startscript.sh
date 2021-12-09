@@ -23,7 +23,7 @@ debug=false
 bs=32
 epochs=10
 cm=1 
-dataDir='/gpfs/projects/bsc21/bsc21163/data_MNIST/'
+dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
 COMMAND="heat_pytorch_mnist.py 
   --batch-size $bs --epochs $epochs --concM $cm --data-dir $dataDir" 
 
