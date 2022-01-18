@@ -249,7 +249,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         for data in test_loader:
             inputs = data[:-1][0]
             inputs = inputs.view(1, -1, *(inputs.size()[2:])).squeeze(0).to(device)
-            predictions = model(inputs)
+            predictions = model(inputs.float())
             loss = loss_function(predictions.float(), inputs.float())
             test_loss+= loss.item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
