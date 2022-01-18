@@ -40,15 +40,15 @@ def hdf5_loader(path):
     f = h5py.File(path, 'r')
     try:
         # small datase structure
-        data_u = torch.FloatTensor(f[list(f.keys())[0]]['u']).permute((1,0,2))
-        data_v = torch.FloatTensor(f[list(f.keys())[0]]['v']).permute((1,0,2))
-        data_w = torch.FloatTensor(f[list(f.keys())[0]]['w']).permute((1,0,2))
+        data_u = torch.from_numpy(np.array(f[list(f.keys())[0]]['u'])).permute((1,0,2))
+        data_v = torch.from_numpy(np.array(f[list(f.keys())[0]]['v'])).permute((1,0,2))
+        data_w = torch.from_numpy(np.array(f[list(f.keys())[0]]['w'])).permute((1,0,2))
     except:
         # large datase structure
         f1 = f[list(f.keys())[0]]
-        data_u = torch.FloatTensor(f1[list(f1.keys())[0]]['u']).permute((1,0,2))
-        data_v = torch.FloatTensor(f1[list(f1.keys())[0]]['v']).permute((1,0,2))
-        data_w = torch.FloatTensor(f1[list(f1.keys())[0]]['w']).permute((1,0,2))
+        data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))
+        data_v = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['v'])).permute((1,0,2))
+        data_w = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['w'])).permute((1,0,2))
 
     return torch.reshape(torch.cat((data_u, data_v, data_w)),
                (3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3))
@@ -218,7 +218,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         inputs = inputs.view(1, -1, *(inputs.size()[2:])).squeeze(0).to(device)
         # ===================forward=====================
         optimizer.zero_grad()
-        predictions = model(inputs)         # Forward pass
+        predictions = model(inputs.float())         # Forward pass
         loss = loss_function(predictions.float(), inputs.float())   # Compute loss function
         # ===================backward====================
         loss.backward()                                        # Backward pass
