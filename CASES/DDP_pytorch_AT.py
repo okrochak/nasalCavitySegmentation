@@ -265,7 +265,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         print(f'\n--------------------------------------------------------')
         print(f'DEBUG: testing results:')
         print(f'TIMER: total testing time: {time.time()-et} s')
-        if not args.testrun or not args.benchrun:
+        if not args.testrun and not args.benchrun:
             plot_scatter(inputs[0][0].cpu().detach().numpy(), 
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
@@ -535,8 +535,8 @@ def main():
             print(f'TIMER: total epoch-1 time: {time.time()-et-first_ep_t} s')
             print(f'TIMER: average epoch-1 time: {(time.time()-et-first_ep_t)/(args.epochs-1)} s')
         if args.benchrun:
-            print(f'TIMER: total epoch-2 time: {lt-first_ep_t} s')
-            print(f'TIMER: average epoch-2 time: {(lt-first_ep_t)/(args.epochs-2)} s')
+            print(f'TIMER: total epoch-2 time: {lt-et-first_ep_t} s')
+            print(f'TIMER: average epoch-2 time: {(lt-et-first_ep_t)/(args.epochs-2)} s')
         print('DEBUG: memory req:',int(torch.cuda.memory_reserved(lrank)/1024/1024),'MB') \
                 if args.cuda else 'DEBUG: memory req: - MB'
         print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
