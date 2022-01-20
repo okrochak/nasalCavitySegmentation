@@ -436,33 +436,14 @@ def main():
     turb_data = []
     # loop over different widths with different sizes
     wlist = glob.glob(args.data_dir+'trainfolder/*')
-    #for wid in wlist:
-    #    turb_dataC = datasets.DatasetFolder(wid, loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    #    tbC_len = []
-    #    tbC_len = [args.batch_size]*(len(turb_dataC)//args.batch_size)
-    #    tbC_len.append(len(turb_dataC)%args.batch_size)
-    #    turb_data_spl = torch.utils.data.random_split(turb_dataC, tbC_len)
-    #    for i in range(len(turb_data_spl)-1):
-    #        turb_data.append(turb_data_spl[i])
-    #turb_data_cat = torch.utils.data.ConcatDataset(turb_data)
-
-    turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb1_len = []
-    tb1_len = [args.batch_size]*(len(turb_data1)//args.batch_size)
-    tb1_len.append(len(turb_data1)%args.batch_size)
-    turb_data1_spl = torch.utils.data.random_split(turb_data1, tb1_len)
-    for i in range(len(turb_data1_spl)-1):
-        turb_data.append(turb_data1_spl[i])
-
-    turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb2_len = []
-    tb2_len = [args.batch_size]*(len(turb_data2)//args.batch_size)
-    tb2_len.append(len(turb_data2)%args.batch_size)
-    turb_data2_spl = torch.utils.data.random_split(turb_data2, tb2_len)
-    for i in range(len(turb_data2_spl)-1):
-        turb_data.append(turb_data2_spl[i])
+    for wid in wlist:
+        turb_dataC = datasets.DatasetFolder(wid, loader=hdf5_loader, transform=transform, extensions='.hdf5')
+        tbC_len = []
+        tbC_len = [args.batch_size]*(len(turb_dataC)//args.batch_size)
+        tbC_len.append(len(turb_dataC)%args.batch_size)
+        turb_data_spl = torch.utils.data.random_split(turb_dataC, tbC_len)
+        for i in range(len(turb_data_spl)-1):
+            turb_data.append(turb_data_spl[i])
     turb_data_cat = torch.utils.data.ConcatDataset(turb_data)
 
     test_data = []
