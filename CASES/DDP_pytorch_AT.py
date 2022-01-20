@@ -209,7 +209,8 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 # train loop
-def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt):
+def train(model, sampler, loss_function, device, train_loader, \
+        optimizer, scheduler, epoch, grank, lt):
     loss_acc = 0.0
     count=0
     sampler.set_epoch(epoch)
@@ -230,7 +231,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         count+=1
 
     if args.schedule:
-        scheduler_lr.step()
+        scheduler.step()
 
     # profiling statistics
     if grank==0:
@@ -494,10 +495,10 @@ def main():
             # profiling (done on last epoch - slower!)
             with torch.autograd.profiler.profile(use_cuda=args.cuda, profile_memory=True) as prof:
                 loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt)
+                            device, train_loader, optimizer, scheduler_lr, epoch, grank, lt)
         else:
             loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt)
+                        device, train_loader, optimizer, scheduler_lr, epoch, grank, lt)
 
         # save first epoch timer
         if epoch == start_epoch:
