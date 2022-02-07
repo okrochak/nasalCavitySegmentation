@@ -14,22 +14,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.functional import interpolate, pad
 from torchvision import datasets, transforms
-from torch.utils.data.sampler import BatchSampler
-from torch.utils.data.sampler import SequentialSampler
-
-from torchnlp.samplers.distributed_sampler import DistributedSampler
-
-class DistributedBatchSampler(BatchSampler):
-    """ `BatchSampler` wrapper that distributes across each batch multiple workers.
-    """
-    def __init__(self, batch_sampler, **kwargs):
-        self.batch_sampler = batch_sampler
-        self.kwargs = kwargs
-    def __iter__(self):
-        for batch in self.batch_sampler:
-            yield list(DistributedSampler(batch, **self.kwargs))
-    def __len__(self):
-        return len(self.batch_sampler)
         
 # plot reconstruction
 def plot_scatter(inp_img, out_img, data_org):
@@ -51,28 +35,50 @@ def plot_scatter(inp_img, out_img, data_org):
     plt.savefig('vfield_recon_VAE'+data_org+str(random.randint(0,100))+'.pdf',
                     bbox_inches = 'tight', pad_inches = 0)
 
+def uniform_data(data):
+    if data.shape[2]==300 or data.shape[2]==400 or data.shape[2]==450:    
+        data_out = data.reshape(data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3])
+        data_out = torch.cat((data_out[:,:,:5,:,:].reshape(data.shape[0],data.shape[1],250,data.shape[3]),
+                            data_out[:,:,-5:,:,:].reshape(data.shape[0],data.shape[1],250,data.shape[3])
+                            ))
+    elif data.shape[2]==750: 
+        data_out = data.reshape(data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3])
+        data_out = torch.cat((data_out[:,:,:5,:,:].reshape(data.shape[0],data.shape[1],250,data.shape[3]),
+                            data_out[:,:,5:10,:,:].reshape(data.shape[0],data.shape[1],250,data.shape[3]),
+                            data_out[:,:,10:,:,:].reshape(data.shape[0],data.shape[1],250,data.shape[3])
+                            ))
+    else:
+        data_out=data
+    return data_out
+
+def collate_batch(batch):
+    imgs = [item[0] for item in batch]
+    targets = [item[1] for item in batch]
+    imgs = torch.cat(imgs)
+    return imgs, targets
+
 # loader for turbulence HDF5 data
 def hdf5_loader(path):
     f = h5py.File(path, 'r')
-    try:
+    #try:
         # small datase structure
-        data_u = torch.from_numpy(np.array(f[list(f.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:]
-        data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
-        data_v = torch.from_numpy(np.array(f[list(f.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
-        data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
-        data_w = torch.from_numpy(np.array(f[list(f.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
-        data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
-    except:
+    #    data_u = torch.from_numpy(np.array(f[list(f.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:] # removes last ten layers assuming free stream
+    #    data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
+    #    data_v = torch.from_numpy(np.array(f[list(f.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
+    #    data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
+    #    data_w = torch.from_numpy(np.array(f[list(f.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
+    #    data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
+    #except:
         # large datase structure
-        f1 = f[list(f.keys())[0]]
-        data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:]
-        data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
-        data_v = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
-        data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
-        data_w = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
-        data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
-    return torch.reshape(torch.cat((data_u, data_v, data_w)),
-               (3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3))
+    f1 = f[list(f.keys())[0]]
+    data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:]
+    data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
+    data_v = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
+    data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
+    data_w = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
+    data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
+    return uniform_data(torch.reshape(torch.cat((data_u, data_v, data_w)),
+               (3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3)))
 
 # parsed settings
 def pars_ini():
@@ -504,112 +510,17 @@ def main():
             torch.cuda.manual_seed(args.nseed)
 
 # load datasets
-    turb_data = []
-    transform = transforms.Compose([transforms.Normalize((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))])
-    turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb1_len = []
-    tb1_len = [args.batch_size]*(len(turb_data1)//args.batch_size)
-    tb1_len.append(len(turb_data1)%args.batch_size)
-    turb_data1_spl = torch.utils.data.random_split(turb_data1, tb1_len)
-    for i in range(len(turb_data1_spl)-1):
-        turb_data.append(turb_data1_spl[i])
-    
-    turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb2_len = []
-    tb2_len = [args.batch_size]*(len(turb_data2)//args.batch_size)
-    tb2_len.append(len(turb_data2)%args.batch_size)
-    turb_data2_spl = torch.utils.data.random_split(turb_data2, tb2_len)
-    for i in range(len(turb_data2_spl)-1):
-        turb_data.append(turb_data2_spl[i])
-        
-    turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1600',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb3_len = []
-    tb3_len = [args.batch_size]*(len(turb_data3)//args.batch_size)
-    tb3_len.append(len(turb_data3)%args.batch_size)
-    turb_data3_spl = torch.utils.data.random_split(turb_data3, tb3_len)
-    for i in range(len(turb_data3_spl)-1):
-        turb_data.append(turb_data3_spl[i])
-        
-    turb_data4 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1800',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb4_len = []
-    tb4_len = [args.batch_size]*(len(turb_data4)//args.batch_size)
-    tb4_len.append(len(turb_data4)%args.batch_size)
-    turb_data4_spl = torch.utils.data.random_split(turb_data4, tb4_len)
-    for i in range(len(turb_data4_spl)-1):
-        turb_data.append(turb_data4_spl[i])
-        
-    turb_data5 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb5_len = []
-    tb5_len = [args.batch_size]*(len(turb_data5)//args.batch_size)
-    tb5_len.append(len(turb_data5)%args.batch_size)
-    turb_data5_spl = torch.utils.data.random_split(turb_data5, tb5_len)
-    for i in range(len(turb_data5_spl)-1):
-        turb_data.append(turb_data5_spl[i])
-    
-    turbdata_cat = torch.utils.data.ConcatDataset(turb_data)
-    
-    test_data = []
-    
-    test_data1 = datasets.DatasetFolder(args.data_dir+'testfolder/Width1000',\
-         loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb1_len = []
-    tb1_len = [args.batch_size]*(len(test_data1)//args.batch_size)
-    tb1_len.append(len(test_data1)%args.batch_size)
-    test_data1_spl = torch.utils.data.random_split(test_data1, tb1_len)
-    for i in range(len(test_data1_spl)-1):
-        test_data.append(test_data1_spl[i])
-    
-    test_data2 = datasets.DatasetFolder(args.data_dir+'testfolder/Width1200',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb2_len = []
-    tb2_len = [args.batch_size]*(len(test_data2)//args.batch_size)
-    tb2_len.append(len(test_data2)%args.batch_size)
-    test_data2_spl = torch.utils.data.random_split(test_data2, tb2_len)
-    for i in range(len(test_data2_spl)-1):
-        test_data.append(test_data2_spl[i])
-        
-    test_data3 = datasets.DatasetFolder(args.data_dir+'testfolder/Width1600',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb3_len = []
-    tb3_len = [args.batch_size]*(len(test_data3)//args.batch_size)
-    tb3_len.append(len(test_data3)%args.batch_size)
-    test_data3_spl = torch.utils.data.random_split(test_data3, tb3_len)
-    for i in range(len(test_data3_spl)-1):
-        test_data.append(test_data3_spl[i])
-    
-    test_data4 = datasets.DatasetFolder(args.data_dir+'testfolder/Width1800',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb4_len = []
-    tb4_len = [args.batch_size]*(len(test_data4)//args.batch_size)
-    tb4_len.append(len(test_data4)%args.batch_size)
-    test_data4_spl = torch.utils.data.random_split(test_data4, tb4_len)
-    for i in range(len(test_data4_spl)-1):
-        test_data.append(test_data4_spl[i])
-    
-    test_data5 = datasets.DatasetFolder(args.data_dir+'testfolder/Width3000',\
-        loader=hdf5_loader, transform=transform, extensions='.hdf5')
-    tb5_len = []
-    tb5_len = [args.batch_size]*(len(test_data5)//args.batch_size)
-    tb5_len.append(len(test_data5)%args.batch_size)
-    test_data5_spl = torch.utils.data.random_split(test_data5, tb5_len)
-    for i in range(len(test_data5_spl)-1):
-        test_data.append(test_data5_spl[i])
-    
-    testdata_cat = torch.utils.data.ConcatDataset(test_data)
-    
+    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
+        loader=hdf5_loader, extensions='.hdf5')
+    test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
+         loader=hdf5_loader, extensions='.hdf5')
+
     # restricts data loading to a subset of the dataset exclusive to the current process
-    btrain_sampler = BatchSampler(SequentialSampler(turbdata_cat), batch_size=args.batch_size, drop_last=False)
-    btest_sampler = BatchSampler(SequentialSampler(testdata_cat), batch_size=args.batch_size, drop_last=False)
-    
-    # restricts data loading to a subset of the dataset exclusive to the current process
-    #args.shuff = args.shuff and not args.testrun
-    train_sampler = DistributedBatchSampler(btrain_sampler, num_replicas=gwsize, rank=lrank)
-    test_sampler = DistributedBatchSampler(btest_sampler, num_replicas=gwsize, rank=lrank)
+    args.shuff = args.shuff and not args.testrun
+    train_sampler = torch.utils.data.distributed.DistributedSampler(
+        turb_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
 
 # distribute dataset to workers
     # persistent workers is not possible for nworker=0
@@ -618,8 +529,12 @@ def main():
     # deterministic testrun - the same dataset each run
     kwargs = {'worker_init_fn': seed_worker, 'generator': g} if args.testrun else {}
 
-    train_loader = torch.utils.data.DataLoader(turbdata_cat, batch_sampler=train_sampler, num_workers=args.nworker, pin_memory=True, persistent_workers=pers_w, prefetch_factor=args.prefetch, **kwargs )
-    test_loader = torch.utils.data.DataLoader(testdata_cat, batch_sampler=test_sampler, num_workers=args.nworker, pin_memory=True, persistent_workers=pers_w, prefetch_factor=args.prefetch, **kwargs )
+    train_loader = torch.utils.data.DataLoader(turb_data, batch_size=args.batch_size,
+        sampler=train_sampler, collate_fn=collate_batch, num_workers=args.nworker, pin_memory=True,
+        persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=2,
+        sampler=test_sampler, collate_fn=collate_batch, num_workers=args.nworker, pin_memory=True,
+        persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
 
     if grank==0:
         print(f'TIMER: read data: {time.time()-st} s\n') 
