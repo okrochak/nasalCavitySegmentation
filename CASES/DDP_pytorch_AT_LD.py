@@ -52,9 +52,10 @@ def uniform_data(data):
     return data_out
 
 def collate_batch(batch):
-    imgs = [item[0] for item in batch]
+    imgs = [item[0].reshape(int(item[0].shape[0]/89), 89, item[0].shape[1], \
+        item[0].shape[2], item[0].shape[3]) for item in batch]
     targets = [item[1] for item in batch]
-    imgs = torch.cat(imgs)
+    imgs = torch.cat((imgs))
     return imgs, targets
 
 # loader for turbulence HDF5 data
