@@ -533,7 +533,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(turb_data, batch_size=args.batch_size,
         sampler=train_sampler, collate_fn=collate_batch, num_workers=args.nworker, pin_memory=True,
         persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
-    test_loader = torch.utils.data.DataLoader(test_data, batch_size=2,
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=args.batch_size,
         sampler=test_sampler, collate_fn=collate_batch, num_workers=args.nworker, pin_memory=True,
         persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
 
