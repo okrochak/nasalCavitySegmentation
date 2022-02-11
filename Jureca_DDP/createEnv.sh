@@ -1,7 +1,7 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 211022a
+# version: 220211a
 # creates machine specific python env
 
 # set modules
@@ -9,7 +9,7 @@ module --force purge
 
 # get sys info
 cDir=$PWD
-sysN=$(eval "uname -n | cut -f2- -d.")
+sysN="$(uname -n | cut -f2- -d.)"
 echo "system:${sysN}"
 echo
 
@@ -22,7 +22,7 @@ elif [ "$sysN" = 'juwels' ] ; then
   ml GCC ParaStationMPI Python CMake
   cont1=true
 elif [ "$sysN" = 'jureca' ] ; then
-  ml GCC ParaStationMPI Python CMake NCCL libaio
+  ml Stages/2022 GCC ParaStationMPI Python CMake NCCL libaio
   cont1=true
 else
   echo
@@ -33,6 +33,11 @@ fi
 echo "modules loaded"
 echo
 
+# get python version
+pver="$(python --version 2>&1 | awk {'print $2'} | cut -f1-2 -d.)"
+echo "python version is ${pver}"
+echo
+
 if [ "$cont1" = true ] ; then
   if [ -d "${cDir}/envAI_${sysN}" ];then
     echo 'env already exist'
@@ -40,32 +45,23 @@ if [ "$cont1" = true ] ; then
 
     source envAI_${sysN}/bin/activate
   else
-    pVer=$(eval "python3 --version")
-    pDir=$(eval "which python3")
-
-    echo "python3 ver:${pVer}"
-    echo "python3 dir:${pDir}"
-    echo
-
     # create env
     python3 -m venv envAI_${sysN}
 
+    # get headers for pip
+    cp "$(which pip3)" $cDir/envAI_${sysN}/bin/
+    ln -s $cDir/envAI_${sysN}/bin/pip3 $cDir/envAI_${sysN}/bin/pip${pver}
+    var="#!$cDir/envAI_${sysN}/bin/python${pver}"
+    sed -i "1s|.*|$var|" $cDir/envAI_${sysN}/bin/pip3
+
     # activate env
     source envAI_${sysN}/bin/activate
-
-    pVer=$(eval "python3 --version")
-    pDir=$(eval "which python3")
-    echo "python3 env ver:${pVer}"
-    echo "python3 env dir:${pDir}"
-    echo
 
     echo "a new env is created in ${cDir}"
     echo "activation is done via:"
     echo "source ${cDir}/envAI_${sysN}/bin/activate"
   fi
 fi
-# get python3 version
-pytV=$(eval "python3 --version | cut -f2 -d.")
 
 # install torch
 if [ -f "${cDir}/envAI_${sysN}/bin/torchrun" ]; then
@@ -75,8 +71,8 @@ else
   export TMPDIR=${cDir}
 
   pip3 install \
-     torch==1.10.0+cu113 torchvision==0.11.1+cu113 torchaudio===0.10.0 \
-     -f https://download.pytorch.org/whl/torch_stable.html --no-cache-dir
+     torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 \
+     -f https://download.pytorch.org/whl/cu113/torch_stable.html --no-cache-dir
 fi
 
 # install horovod
@@ -97,20 +93,21 @@ if [ -f "${cDir}/envAI_${sysN}/bin/deepspeed" ]; then
   echo 'DeepSpeed already installed'
   echo
 else
-  export DS_BUILD_OPS=1 # not working?? recursion error
+  export DS_BUILD_OPS=1
+  # if above not working?? recursion error use this
   #export DS_BUILD_FUSED_ADAM=1
   #export DS_BUILD_UTILS=1
   export TMPDIR=${cDir}
 
   pip3 install --no-cache-dir DeepSpeed
 
-  #add this to .../deepspeed/launcher/launch.py l.70
+  add this to .../deepspeed/launcher/launch.py l.70
   var='    argsy1.node_rank=int(os.environ.get("SLURM_PROCID",0))'
-  sed -i "70s|.*|$var|" $cDir/envAI_${sysN}/lib/python3.${pytV}/site-packages/deepspeed/launcher/launch.py
+  sed -i "70s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
 fi
 
 # install heat
-if [ -d "${cDir}/envAI_${sysN}/lib/python3.${pytV}/site-packages/heat" ]; then
+if [ -d "${cDir}/envAI_${sysN}/lib/python${pver}/site-packages/heat" ]; then
   echo 'HeAT already installed'
   echo
 else
@@ -120,9 +117,9 @@ else
   wget https://files.pythonhosted.org/packages/5d/3a/4781f1e6910753bfdfa6712c83c732c60e675d8de14983926a0d9306c7a6/heat-1.1.1.tar.gz
   tar xzf heat-1.1.1.tar.gz
   var='        "torch>=1.7.0",'
-  sed -i "36s|.*|$var|" heat-1.1.1/setup.py 
+  sed -i "36s|.*|$var|" heat-1.1.1/setup.py
   var='        "torchvision>=0.8.0",'
-  sed -i "39s|.*|$var|" heat-1.1.1/setup.py 
+  sed -i "39s|.*|$var|" heat-1.1.1/setup.py
 
   # create tar again!
   rm -rf heat-1.1.1.tar.gz
@@ -136,12 +133,13 @@ fi
 
 # get rest of the libraries$
 if [ "$cont1" = true ] ; then
+  # install rest
   pip3 install -r reqs.txt --ignore-installed
 
-  #modify l.4 of /torchnlp/_third_party/weighted_random_sampler.py
+  # modify l.4 of /torchnlp/_third_party/weighted_random_sampler.py
   var='int_classes = int'
   sed -i "4s|.*|$var|" \
-    $cDir/envAI_${sysN}/lib/python3.${pytV}/site-packages/torchnlp/_third_party/weighted_random_sampler.py
+    $cDir/envAI_${sysN}/lib/python${pver}/site-packages/torchnlp/_third_party/weighted_random_sampler.py
 fi
 
 #eof
