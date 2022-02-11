@@ -316,7 +316,7 @@ def main():
 
 # clean-up
     if hvd.rank()==0 and hvd.local_rank()==0:
-        print(f'TIMER: final time: {time.time()-st} s\n')
+        print(f'TIMER: final time: {timer()-st} s\n')
     hvd.shutdown()
 
 if __name__ == "__main__": 
