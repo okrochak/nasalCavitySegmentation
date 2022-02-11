@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 211029a
+# version: 220211a
 
 # std libs
 import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
@@ -105,7 +105,7 @@ def pars_ini():
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
 
-# network 
+# network
 class autoencoder(nn.Module):
     def __init__(self):
         super(autoencoder, self).__init__()
@@ -159,8 +159,8 @@ class autoencoder(nn.Module):
         """
         Decoder:
         Map the given latent code to the image space.
-        decoder - reLU activation is applied first followed by a batch normalisation 
-        and a convolutional layer which maintains the same dimension and an interpolation 
+        decoder - reLU activation is applied first followed by a batch normalisation
+        and a convolutional layer which maintains the same dimension and an interpolation
         layer in the end to decompress the dataset
         """
 # 3rd decoding layer
@@ -198,7 +198,7 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_b
                  'optimizer' : optimizer.state_dict()}
 
         # write on worker with is_best
-        if grank == is_best_rank: 
+        if grank == is_best_rank:
             torch.save(state,'./'+res_name)
             print(f'DEBUG: state in {grank} is saved on epoch:{epoch} in {time.time()-rt} s')
 
@@ -267,13 +267,16 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         print(f'DEBUG: testing results:')
         print(f'TIMER: total testing time: {time.time()-et} s')
         if not args.testrun and not args.benchrun:
-            plot_scatter(inputs[0][0].cpu().detach().numpy(), 
+            plot_scatter(inputs[0][0].cpu().detach().numpy(),
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
+    avg_test_loss = par_mean(test_loss,gwsize)
+    avg_test_loss = float(np.float_(avg_test_loss.data.cpu().numpy()))
     avg_mean_sqr_diff = par_mean(mean_sqr_diff,gwsize)
     avg_mean_sqr_diff = float(np.float_(avg_mean_sqr_diff.data.cpu().numpy()))
     if grank==0:
+        print(f'DEBUG: avg_test_loss: {avg_test_loss}')
         print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
 
     return avg_mean_sqr_diff
@@ -376,7 +379,7 @@ def main():
     lrank = dist.get_rank()%lwsize     # local rank - assign per node
 
     # some debug
-    if grank==0: 
+    if grank==0:
         print('TIMER: initialise:', time.time()-st, 's')
         print('DEBUG: local ranks:', lwsize, '/ global ranks:', gwsize)
         print('DEBUG: sys.version:',sys.version,'\n')
@@ -385,7 +388,7 @@ def main():
         print('DEBUG: args.data_dir:',args.data_dir)
         print('DEBUG: args.restart_int:',args.restart_int,'\n')
 
-        print('DEBUG: model parsers:')        
+        print('DEBUG: model parsers:')
         print('DEBUG: args.batch_size:',args.batch_size)
         print('DEBUG: args.epochs:',args.epochs)
         print('DEBUG: args.lr:',args.lr)
@@ -442,7 +445,7 @@ def main():
         persistent_workers=pers_w, prefetch_factor=args.prefetch, **kwargs )
 
     if grank==0:
-        print(f'TIMER: read data: {time.time()-st} s\n') 
+        print(f'TIMER: read data: {time.time()-st} s\n')
 
     # create model
     model = autoencoder().to(device)
@@ -459,7 +462,7 @@ def main():
     optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
 
-# resume state 
+# resume state
     start_epoch = 0
     best_acc = np.Inf
     res_name='checkpoint.pth.tar'
@@ -500,36 +503,38 @@ def main():
             loss_acc = train(distrib_model, train_sampler, loss_function, \
                         device, train_loader, optimizer, scheduler_lr, epoch, grank, lt)
 
-        # save first epoch timer
+        # save first/last epoch timer
         if epoch == start_epoch:
             first_ep_t = time.time()-lt
+        if epoch == args.epochs-1:
+            last_ep_t = time.time()-lt
 
         # printout profiling results of the last epoch
         if args.benchrun and epoch==args.epochs-1 and grank==0:
-            print(f'\n--------------------------------------------------------') 
+            print(f'\n--------------------------------------------------------')
             print(f'DEBUG: benchmark of last epoch:\n')
             what1 = 'cuda' if args.cuda else 'cpu'
             print(prof.key_averages().table(sort_by='self_'+str(what1)+'_time_total'))
 
-        # save state if found a better state 
+        # save state if found a better state
         is_best = loss_acc < best_acc
-        if epoch % args.restart_int == 0 and not args.benchrun:
+        if epoch % args.restart_int == 0 and not args.benchrun and not args.testrun:
             save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best)
             # reset best_acc
             best_acc = min(loss_acc, best_acc)
 
 # finalise training
     # save final state
-    if not args.benchrun:
+    if not args.benchrun and not args.testrun:
         save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,True)
     dist.barrier()
 
     # some debug
     if grank==0:
-        print(f'\n--------------------------------------------------------') 
+        print(f'\n--------------------------------------------------------')
         print(f'DEBUG: training results:')
         print(f'TIMER: first epoch time: {first_ep_t} s')
-        print(f'TIMER: last epoch time: {time.time()-lt} s')
+        print(f'TIMER: last epoch time: {last_ep_t} s')
         print(f'TIMER: total epoch time: {time.time()-et} s')
         print(f'TIMER: average epoch time: {(time.time()-et)/args.epochs} s')
         if epoch > 1:
@@ -550,7 +555,7 @@ def main():
         print(f'TIMER: final time: {time.time()-st} s')
     dist.destroy_process_group()
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     main()
     sys.exit()
 
