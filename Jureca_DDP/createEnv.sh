@@ -103,7 +103,7 @@ else
 
   add this to .../deepspeed/launcher/launch.py l.70
   var='    argsy1.node_rank=int(os.environ.get("SLURM_PROCID",0))'
-  sed -i "70s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
+  sed -i "85s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
 fi
 
 # install heat
