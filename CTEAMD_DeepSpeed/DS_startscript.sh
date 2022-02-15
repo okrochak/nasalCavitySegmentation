@@ -85,7 +85,7 @@ done
 WID=`echo {${x::-1}} | base64 -w 0`
 
 # modify config file with parameters
-sed -i "2s|.*|  \"train_batch_size\": ${bs},|" DS_config.json
+sed -i "2s|.*|  \"train_micro_batch_size_per_gpu\": ${bs},|" DS_config.json
 ####
 
 # launch
