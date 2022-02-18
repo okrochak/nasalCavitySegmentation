@@ -22,7 +22,8 @@ elif [ "$sysN" = 'juwels' ] ; then
   ml GCC ParaStationMPI Python CMake
   cont1=true
 elif [ "$sysN" = 'jureca' ] ; then
-  ml Stages/2022 GCC ParaStationMPI Python CMake NCCL libaio
+  #ml Stages/2022 GCC ParaStationMPI Python CMake NCCL libaio # Horovod issues with pscom??
+  ml Stages/2022 GCC OpenMPI Python NCCL cuDNN libaio CMake
   cont1=true
 else
   echo
@@ -49,10 +50,14 @@ if [ "$cont1" = true ] ; then
     python3 -m venv envAI_${sysN}
 
     # get headers for pip
-    cp "$(which pip3)" $cDir/envAI_${sysN}/bin/
-    ln -s $cDir/envAI_${sysN}/bin/pip3 $cDir/envAI_${sysN}/bin/pip${pver}
-    var="#!$cDir/envAI_${sysN}/bin/python${pver}"
-    sed -i "1s|.*|$var|" $cDir/envAI_${sysN}/bin/pip3
+    if [ -f "${cDir}/envAI_${sysN}/bin/pip3" ]; then
+      echo 'pip already exist'
+    else
+      cp "$(which pip3)" $cDir/envAI_${sysN}/bin/
+      ln -s $cDir/envAI_${sysN}/bin/pip3 $cDir/envAI_${sysN}/bin/pip${pver}
+      var="#!$cDir/envAI_${sysN}/bin/python${pver}"
+      sed -i "1s|.*|$var|" $cDir/envAI_${sysN}/bin/pip3
+    fi
 
     # activate env
     source envAI_${sysN}/bin/activate
