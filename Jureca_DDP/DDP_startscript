@@ -43,7 +43,8 @@ EXEC=$COMMAND" --batch-size $bs
 echo "DEBUG: EXECUTE=$COMMAND"
 
 # set modules
-ml GCC ParaStationMPI Python cuDNN NCCL libaio
+# ml Stages/2020 GCC ParaStationMPI Python cuDNN NCCL libaio
+ml Stages/2022 GCC OpenMPI Python cuDNN NCCL libaio
 
 # set env
 source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate
@@ -70,6 +71,9 @@ echo
 # set comm
 export CUDA_VISIBLE_DEVICES="0,1,2,3"
 export OMP_NUM_THREADS=1
+if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
+  export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+fi
 
 # launch
 srun python -m torch.distributed.run \
