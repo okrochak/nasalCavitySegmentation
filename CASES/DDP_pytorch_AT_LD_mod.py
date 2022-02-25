@@ -569,8 +569,9 @@ def main():
             # reset best_acc
             best_acc = min(loss_acc, best_acc)
 
-        # try empty
-        torch.cuda.empty_cache()
+        # empty cuda cache
+        if args.cuda:
+            torch.cuda.empty_cache()
 
 # finalise training
     # save final state
