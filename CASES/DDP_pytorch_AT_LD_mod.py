@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220222a
+# version: 220225a
 
 # std libs
 import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
