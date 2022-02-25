@@ -35,34 +35,46 @@ def plot_scatter(inp_img, out_img, data_org):
     plt.savefig('vfield_recon_VAE'+data_org+str(random.randint(0,100))+'.pdf',
                     bbox_inches = 'tight', pad_inches = 0)
 
+class custom_batch:
+    def __init__(self, data):
+        transposed_data = list(zip(*data))
+        self.inp = torch.stack(transposed_data[0], 0)
+
+    # custom memory pinning method on custom type
+    def pin_memory(self):
+        na,nb,nc,nd,ne = self.inp.shape
+        self.inp = self.inp.view((na*nb//89,89,nc,nd,ne)).pin_memory()
+        return self
+
 def collate_batch(batch):
-    imgs = [item[0].view(int(item[0].shape[0]/89), 89, item[0].shape[1], \
-        item[0].shape[2], item[0].shape[3]) for item in batch]
-    targets = [item[1] for item in batch]
-    imgs = torch.cat((imgs))
-    return imgs, targets
+    return custom_batch(batch)
 
 # loader for turbulence HDF5 data
 def hdf5_loader(path):
-    # NOTES:
-    # removes last ten layers assuming free stream
+    # read hdf5 w/ structures
     f = h5py.File(path, 'r')
     try:
        # small datase structure
-        data_u = torch.from_numpy(np.array(f[list(f.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:] 
-        data_v = torch.from_numpy(np.array(f[list(f.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
-        data_w = torch.from_numpy(np.array(f[list(f.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
+        data_u = np.array(f[list(f.keys())[0]]['u'])
+        data_v = np.array(f[list(f.keys())[0]]['v'])
+        data_w = np.array(f[list(f.keys())[0]]['w'])
     except:
         # large datase structure
         f1 = f[list(f.keys())[0]]
-        data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:]
-        data_v = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['v'])).permute((1,0,2))[:-9,:,:]
-        data_w = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
+        data_u = np.array(f1[list(f1.keys())[0]]['u'])
+        data_v = np.array(f1[list(f1.keys())[0]]['v'])
+        data_w = np.array(f1[list(f1.keys())[0]]['w'])
+
+    # convert to torch and remove last ten layers assuming free stream
+    dtype = torch.float16 if args.amp else torch.float32
+    data_u = torch.tensor(data_u,dtype=dtype).permute((1,0,2))[:-9,:,:]
+    data_v = torch.tensor(data_v,dtype=dtype).permute((1,0,2))[:-9,:,:]
+    data_w = torch.tensor(data_w,dtype=dtype).permute((1,0,2))[:-9,:,:]
 
     data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
     data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
     data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
-  
+
     # unified data structure
     nsub=250 # desired subset lenght in y-direction
     nmin=50 # minimum subset length (must be divisible for any dataset)
@@ -74,7 +86,7 @@ def hdf5_loader(path):
                data_out[:,:,-5:,:,:].view((ai,3,nsub,ak))),0)
     else:
        return torch.cat((data_u, data_v, data_w)).view((ai*(aj//nsub),3,nsub,ak))
-    
+
 # parsed settings
 def pars_ini():
     global args
@@ -122,6 +134,12 @@ def pars_ini():
     parser.add_argument('--benchrun', action='store_true', default=False,
                         help='do a bench run w/o IO (default: False)')
 
+    # optimizations
+    parser.add_argument('--cudnn', action='store_true', default=False,
+                        help='turn on cuDNN optimizations (default: False)')
+    parser.add_argument('--amp', action='store_true', default=False,
+                        help='turn on Automatic Mixed Precision (default: False)')
+
     args = parser.parse_args()
 
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
@@ -134,9 +152,9 @@ class autoencoder(nn.Module):
 
         self.leaky_reLU = nn.LeakyReLU(0.2)
         self.relu = nn.ReLU()
-        
+
 #Encoding layers - conv_en1 denotes 1st (1) convolutional layer for the encoding (en) part
-        
+
         # Encoder
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(16)
@@ -193,7 +211,8 @@ class autoencoder(nn.Module):
 
         conv7 = self.bn7(self.conv7(conv6))
         conv7 = interpolate(conv7, scale_factor=2, mode='bilinear', align_corners=True)
-        conv7 = pad(conv7,(1,1,0,0)) if inp_x.shape[2]==250 or inp_x.shape[2]==450 or inp_x.shape[2]==750 else pad(conv7,(1,1,1,1))
+        conv7 = pad(conv7,(1,1,0,0)) if inp_x.shape[2]==250 or inp_x.shape[2]==450 \
+                or inp_x.shape[2]==750 else pad(conv7,(1,1,1,1))
         conv7 = self.leaky_reLU(conv7)
 
         out_x = self.conv8(conv7)
@@ -216,7 +235,7 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_b
                  'optimizer' : optimizer.state_dict()}
 
         # write on worker with is_best
-        if grank == is_best_rank: 
+        if grank == is_best_rank:
             torch.save(state,'./'+res_name)
             print(f'DEBUG: state in {grank} is saved on epoch:{epoch} in {time.time()-rt} s')
 
@@ -229,22 +248,27 @@ def seed_worker(worker_id):
 # train loop
 def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler):
     loss_acc = 0.0
-    count=0
-    #sampler.set_epoch(epoch)
-    for inputs, labels in train_loader:
-        inputs = inputs.view(1, -1, *(inputs.size()[2:])).squeeze(0).float().to(device)
-        # ===================forward=====================
-        optimizer.zero_grad()
-        predictions = model(inputs)         # Forward pass
-        loss = loss_function(predictions.float(), inputs.float())   # Compute loss function
-        # ===================backward====================
-        loss.backward()                                        # Backward pass
-        optimizer.step()                                       # Optimizer step
+    for batch_ndx, (samples) in enumerate(train_loader):
+        inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+        if args.amp:
+            with torch.cuda.amp.autocast():
+                optimizer.zero_grad()
+                # ===================forward=====================
+                predictions = model(inputs).float()         # Forward pass
+                loss = loss_function(predictions, inputs)   # Compute loss function
+                # ===================backward====================
+                loss.backward()                             # Backward pass
+                optimizer.step()                            # Optimizer step
+        else:
+            optimizer.zero_grad()
+            predictions = model(inputs).float()
+            loss = loss_function(predictions, inputs)
+            loss.backward()
+            optimizer.step()
         loss_acc+= loss.item()
-        if count % args.log_int == 0 and grank==0:
-            print(f'Epoch: {epoch} / {100 * (count + 1) / len(train_loader):3.2f}% complete',\
+        if batch_ndx % args.log_int == 0 and grank==0:
+            print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):3.2f}% complete',\
                   f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}')
-        count+=1
 
     if args.schedule:
         scheduler.step()
@@ -261,17 +285,15 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
     model.eval()
     test_loss = 0.0
     mean_sqr_diff = []
-    count=0
     with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs = inputs.view(1, -1, *(inputs.size()[2:])).squeeze(0).float().to(device)
-            predictions = model(inputs)
-            loss = loss_function(predictions.float(), inputs.float())
+        for count, (samples) in enumerate(test_loader):
+            inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+            predictions = model(inputs).float()
+            loss = loss_function(predictions, inputs)
             test_loss+= loss.item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             mean_sqr_diff.append(\
-                torch.mean(torch.square(predictions.float()-inputs.float())).item())
-            count+=1
+                torch.mean(torch.square(predictions-inputs)).item())
 
     # mean from dataset (ignore if just 1 dataset)
     if count>1:
@@ -282,7 +304,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         print(f'DEBUG: testing results:')
         print(f'TIMER: total testing time: {time.time()-et} s')
         if not args.testrun and not args.benchrun:
-            plot_scatter(inputs[0][0].cpu().detach().numpy(), 
+            plot_scatter(inputs[0][0].cpu().detach().numpy(),
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
@@ -376,7 +398,6 @@ def main():
     program_dir = os.getcwd()
 
     # start the time.time for profiling
-    #global st, lwsize, gwsize, grank, lrank
     st = time.time()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
@@ -395,7 +416,7 @@ def main():
     lrank = dist.get_rank()%lwsize     # local rank - assign per node
 
     # some debug
-    if grank==0: 
+    if grank==0:
         print('TIMER: initialise:', time.time()-st, 's')
         print('DEBUG: local ranks:', lwsize, '/ global ranks:', gwsize)
         print('DEBUG: sys.version:',sys.version,'\n')
@@ -404,7 +425,7 @@ def main():
         print('DEBUG: args.data_dir:',args.data_dir)
         print('DEBUG: args.restart_int:',args.restart_int,'\n')
 
-        print('DEBUG: model parsers:')        
+        print('DEBUG: model parsers:')
         print('DEBUG: args.batch_size:',args.batch_size)
         print('DEBUG: args.epochs:',args.epochs)
         print('DEBUG: args.lr:',args.lr)
@@ -425,12 +446,19 @@ def main():
         print('DEBUG: args.cuda:',args.cuda)
         print('DEBUG: args.benchrun:',args.benchrun,'\n')
 
+        print('DEBUG: optimisation parsers:')
+        print('DEBUG: args.cudnn:',args.cudnn)
+        print('DEBUG: args.amp:',args.amp,'\n')
+
     # encapsulate the model on the GPU assigned to the current process
     device = torch.device('cuda' if args.cuda and torch.cuda.is_available() else 'cpu',lrank)
     if args.cuda:
         torch.cuda.set_device(lrank)
         if args.testrun:
             torch.cuda.manual_seed(args.nseed)
+
+    # cuDNN optimisation
+    torch.backends.cudnn.benchmark = args.cudnn
 
 # load datasets
     turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
@@ -460,7 +488,7 @@ def main():
         persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
 
     if grank==0:
-        print(f'TIMER: read data: {time.time()-st} s\n') 
+        print(f'TIMER: read data: {time.time()-st} s\n')
 
     # create model
     model = autoencoder().to(device)
@@ -477,10 +505,10 @@ def main():
     optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
     # alt.
-    #optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay) 
+    #optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     #scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
 
-# resume state 
+# resume state
     start_epoch = 0
     best_acc = np.Inf
     res_name='checkpoint.pth.tar'
@@ -520,7 +548,7 @@ def main():
         else:
             loss_acc = train(distrib_model, train_sampler, loss_function, \
                             device, train_loader, optimizer, epoch, grank, lt, scheduler_lr)
-        
+
         # save first/last epoch timer
         if epoch == start_epoch:
             first_ep_t = time.time()-lt
@@ -529,17 +557,20 @@ def main():
 
         # printout profiling results of the last epoch
         if args.benchrun and epoch==args.epochs-1 and grank==0:
-            print(f'\n--------------------------------------------------------') 
+            print(f'\n--------------------------------------------------------')
             print(f'DEBUG: benchmark of last epoch:\n')
             what1 = 'cuda' if args.cuda else 'cpu'
             print(prof.key_averages().table(sort_by='self_'+str(what1)+'_time_total'))
 
-        # save state if found a better state 
+        # save state if found a better state
         is_best = loss_acc < best_acc
         if epoch % args.restart_int == 0 and not args.benchrun:
             save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best)
             # reset best_acc
             best_acc = min(loss_acc, best_acc)
+
+        # try empty
+        torch.cuda.empty_cache()
 
 # finalise training
     # save final state
@@ -573,7 +604,7 @@ def main():
         print(f'TIMER: final time: {time.time()-st} s')
     dist.destroy_process_group()
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     main()
     sys.exit()
 
