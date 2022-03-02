@@ -7,7 +7,10 @@ https://github.com/pytorch/pytorch#from-source
 https://apps.fz-juelich.de/jsc/hps/jureca/index.html
 
 # current isues
-1.
+1. torchrun: Hostname/endpoint mismatch not handled\
+workaround is to modify torchrun and use included batch script\
+simply run `createEnv.sh` to install fixed torch\
+discussion in: https://github.com/pytorch/pytorch/issues/73656
 
 # to-do
 1.
@@ -16,11 +19,6 @@ https://apps.fz-juelich.de/jsc/hps/jureca/index.html
 1. 
 
 # usage
-add these commands to your batch script (on juwels booster):\
-`ml GCC ParaStationMPI Python cuDNN NCCL libaio`\
-`source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate`
-
-# install (opt.)
 1. clone
 2. run `./createEnv.sh` to create env and install torch
 3. submit `sbatch DDP_startscript.sh`

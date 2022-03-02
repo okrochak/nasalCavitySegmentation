@@ -27,23 +27,24 @@ epochs=5    # epochs
 lr=0.01     # learning rate
 
 # MNIST
-#dataDir='/p/project/prcoe12/RAISE/data_MNIST/'
+#dataDir="/p/project/prcoe12/RAISE/data_MNIST/"
 #COMMAND="DDP_pytorch_mnist.py"
 
 # AT
-#dataDir='/p/project/prcoe12/RAISE/T31/'
-dataDir='/p/project/prcoe12/RAISE/T31_LD/'
+dataDir="/p/project/prcoe12/RAISE/T31_LD/"
 COMMAND="DDP_pytorch_AT.py"
-EXEC=$COMMAND" --batch-size $bs
-  --epochs $epochs
-  --lr $lr
-  --nworker $SLURM_CPUS_PER_TASK
+EXEC="$COMMAND \
+  --batch-size $bs \
+  --epochs $epochs \
+  --lr $lr \
+  --nworker $SLURM_CPUS_PER_TASK \
   --data-dir $dataDir"
 
-echo "DEBUG: EXECUTE=$COMMAND"
+
+### do not modify below ###
+
 
 # set modules
-# ml Stages/2020 GCC ParaStationMPI Python cuDNN NCCL libaio
 ml Stages/2022 GCC OpenMPI Python cuDNN NCCL libaio
 
 # set env
@@ -53,6 +54,8 @@ source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate
 sleep 1
 
 # job info 
+echo "DEBUG: EXECUTE: $EXEC"
+echo "DEBUG: SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "DEBUG: SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
 echo "DEBUG: SLURM_NNODES: $SLURM_NNODES"
 echo "DEBUG: SLURM_NTASKS: $SLURM_NTASKS"
@@ -76,12 +79,14 @@ if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
 fi
 
 # launch
-srun python -m torch.distributed.run \
+srun bash -c "torchrun \
+    --log_dir='logs' \
     --nnodes=$SLURM_NNODES \
     --nproc_per_node=$SLURM_GPUS_PER_NODE \
     --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_conf=is_host=$((($SLURM_NODEID)) && echo 0 || echo 1) \
     --rdzv_backend=c10d \
-    --rdzv_endpoint=$SLURMD_NODENAME.jureca:29500 \
-    $EXEC
+    --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
+    $EXEC"
 
 # eof
