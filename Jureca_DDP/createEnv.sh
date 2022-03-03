@@ -16,14 +16,14 @@ echo
 cont1=false
 if [ "$sysN" = 'deepv' ] ; then
   ml use $OTHERSTAGES
-  #ml Stages/2022 GCC ParaStationMPI cuDNN NCCL Python CMake
+  #ml Stages/2022 GCC ParaStationMPI cuDNN NCCL Python CMake # Horovod issues with pscom??
   ml Stages/2022 GCC OpenMPI cuDNN NCCL Python CMake
   cont1=true
 elif [ "$sysN" = 'juwels' ] ; then
   ml GCC ParaStationMPI Python CMake
   cont1=true
 elif [ "$sysN" = 'jureca' ] ; then
-  # ml Stages/2022 GCC ParaStationMPI Python CMake NCCL libaio
+  #ml Stages/2022 GCC ParaStationMPI Python CMake NCCL libaio # Horovod iassues with pscom??
   ml Stages/2022 GCC OpenMPI Python NCCL cuDNN libaio CMake
   cont1=true
 else
@@ -51,11 +51,15 @@ if [ "$cont1" = true ] ; then
     python3 -m venv envAI_${sysN}
 
     # get headers for pip
-    cp "$(which pip3)" $cDir/envAI_${sysN}/bin/
-    ln -s $cDir/envAI_${sysN}/bin/pip3 $cDir/envAI_${sysN}/bin/pip${pver}
-    var="#!$cDir/envAI_${sysN}/bin/python${pver}"
-    sed -i "1s|.*|$var|" $cDir/envAI_${sysN}/bin/pip3
-    
+    if [ -f "${cDir}/envAI_${sysN}/bin/pip3" ]; then
+      echo 'pip already exist'
+    else
+      cp "$(which pip3)" $cDir/envAI_${sysN}/bin/
+      ln -s $cDir/envAI_${sysN}/bin/pip3 $cDir/envAI_${sysN}/bin/pip${pver}
+      var="#!$cDir/envAI_${sysN}/bin/python${pver}"
+      sed -i "1s|.*|$var|" $cDir/envAI_${sysN}/bin/pip3
+    fi
+
     # activate env
     source envAI_${sysN}/bin/activate
 
@@ -95,7 +99,7 @@ if [ -f "${cDir}/envAI_${sysN}/bin/deepspeed" ]; then
   echo 'DeepSpeed already installed'
   echo
 else
-  export DS_BUILD_OPS=1 
+  export DS_BUILD_OPS=1
   # if above not working?? recursion error use this
   #export DS_BUILD_FUSED_ADAM=1
   #export DS_BUILD_UTILS=1
@@ -123,9 +127,9 @@ else
   wget https://files.pythonhosted.org/packages/5d/3a/4781f1e6910753bfdfa6712c83c732c60e675d8de14983926a0d9306c7a6/heat-1.1.1.tar.gz
   tar xzf heat-1.1.1.tar.gz
   var='        "torch>=1.7.0",'
-  sed -i "36s|.*|$var|" heat-1.1.1/setup.py 
+  sed -i "36s|.*|$var|" heat-1.1.1/setup.py
   var='        "torchvision>=0.8.0",'
-  sed -i "39s|.*|$var|" heat-1.1.1/setup.py 
+  sed -i "39s|.*|$var|" heat-1.1.1/setup.py
 
   # create tar again!
   rm -rf heat-1.1.1.tar.gz
@@ -133,7 +137,7 @@ else
   rm -rf heat-1.1.1
 
   pip3 install --no-cache-dir 'heat-1.1.1.tar.gz[hdf5,netcdf]'
-  
+
   rm -rf heat-1.1.1.tar.gz
 fi
 
@@ -141,7 +145,7 @@ fi
 if [ "$cont1" = true ] ; then
   # install rest
   pip3 install -r reqs.txt --ignore-installed
-  
+
   # modify l.4 of /torchnlp/_third_party/weighted_random_sampler.py
   var='int_classes = int'
   sed -i "4s|.*|$var|" \
