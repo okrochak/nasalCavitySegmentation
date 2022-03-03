@@ -111,9 +111,9 @@ else
 
   pip3 install --no-cache-dir DeepSpeed
 
-  add this to .../deepspeed/launcher/launch.py l.70
+  # add this to .../deepspeed/launcher/launch.py l.86
   var='    args.node_rank=int(os.environ.get("SLURM_PROCID",0))'
-  sed -i "85s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
+  sed -i "86s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
 fi
 
 # install heat
