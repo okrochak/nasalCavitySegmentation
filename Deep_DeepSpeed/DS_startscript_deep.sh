@@ -1,41 +1,36 @@
 #!/bin/bash
 
 # general configuration of the job
-#SBATCH --job-name=HeATTest
+#SBATCH --job-name=DSTest
 #SBATCH --account=deepext
 #SBATCH --mail-user=
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
 #SBATCH --error=job.err
-#SBATCH --time=01:00:00
+#SBATCH --time=00:30:00
 
 # configure node and process count on the CM
 #SBATCH --partition=dp-esb
-#SBATCH --nodes=4
-#SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=1
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=1
 #SBATCH --exclusive
 
 # parameters
-debug=false # do debug
-bs=96       # batch-size
-epochs=1    # epochs
+debug=false # do nccl debug
+epochs=10   # epochs
 lr=0.01     # learning rate
-
-# dataset
-# MNIST
-#dataDir="/p/project/prcoe12/RAISE/data_MNIST/"
-#COMMAND="DDP_pytorch_mnist.py"
+bs=96       # batch-size
 
 # AT
 dataDir="/p/project/prcoe12/RAISE/T31/"
-COMMAND="HeAT_pytorch_AT.py"
-
+COMMAND="DS_pytorch_AT.py"
 EXEC="$COMMAND \
   --batch-size $bs \
   --epochs $epochs \
   --lr $lr \
+  --nworker $SLURM_CPUS_PER_TASK \
   --data-dir $dataDir"
 
 # set modules
@@ -45,10 +40,6 @@ ml Stages/2022 GCC/11.2.0 OpenMPI/4.1.2 cuDNN/8.3.1.22-CUDA-11.5 NCCL/2.11.4-CUD
 
 # set env - pip
 source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate
-
-# set env - conda
-#source /p/project/prcoe12/RAISE/miniconda3_deepv/etc/profile.d/conda.sh
-#conda activate
 
 # sleep a sec
 sleep 1
@@ -71,20 +62,23 @@ if [ "$debug" = true ] ; then
 fi
 echo
 
-# set comm, CUDA and OMP
-#PSP_CUDA=1 # not needed atm
-#PSP_UCP=1 # not needed atm
-#PSP_OPENIB=1 # not needed atm
-#export NCCL_SOCKET_IFNAME=ib # not needed atm
-#export NCCL_IB_HCA=ipogif0 # not needed atm
-#export NCCL_IB_CUDA_SUPPORT=1 # not needed atm
-export CUDA_VISIBLE_DEVICES="0"
-export OMP_NUM_THREADS=1
-if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
-  export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-fi
+#### do not change this part
+# create node-list
+sysN=$(scontrol show hostnames)
+for i in $sysN; do
+  x+=\"$i\":[$CUDA_VISIBLE_DEVICES],
+done
+WID=`echo {${x::-1}} | base64 -w 0`
 
-# launch
-srun --mpi=pspmix python3 -u $EXEC
+# modify config file with parameters
+sed -i "2s|.*|  \"train_micro_batch_size_per_gpu\": ${bs},|" DS_config.json
+####
+
+srun python3 -m deepspeed.launcher.launch \
+  --node_rank $SLURM_PROCID \
+  --master_addr ${SLURMD_NODENAME}i \
+  --master_port 29500 \
+  --world_info $WID \
+  $EXEC --deepspeed_mpi --deepspeed_config DS_config.json
 
 # eof
