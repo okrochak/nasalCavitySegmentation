@@ -4,19 +4,12 @@
 https://github.com/helmholtz-analytics/heat
 
 # current isues
-1. no concatenate dataset option
+1. no alternative to --mpi=pspmix with OMPI, but works
 
 # to-do
-1. find concatenate dataset option
+1. 
 
-# usage
-add these commands to your batch script (on deepv):\
-`module --force purge`\
-`module use $OTHERSTAGES`\
-`ml Stages/2020 GCC ParaStationMPI/5.4.7-1-mt Python NCCL mpi4py netCDF parallel-netcdf SciPy-Stack`\
-`source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate`
-
-# install (opt.)
+# usage - pip
 1. clone
-2. run `./install_heat.sh`
-3. submit `sbatch heat_startscript.sh`
+2. run `./createENV.sh`
+3. submit `sbatch HeAT_startscript_deep.sh`
