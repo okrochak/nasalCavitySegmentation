@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220225a
+# version: 220304a
 
 # std libs
 import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
@@ -53,17 +53,10 @@ def collate_batch(batch):
 def hdf5_loader(path):
     # read hdf5 w/ structures
     f = h5py.File(path, 'r')
-    try:
-       # small datase structure
-        data_u = np.array(f[list(f.keys())[0]]['u'])
-        data_v = np.array(f[list(f.keys())[0]]['v'])
-        data_w = np.array(f[list(f.keys())[0]]['w'])
-    except:
-        # large datase structure
-        f1 = f[list(f.keys())[0]]
-        data_u = np.array(f1[list(f1.keys())[0]]['u'])
-        data_v = np.array(f1[list(f1.keys())[0]]['v'])
-        data_w = np.array(f1[list(f1.keys())[0]]['w'])
+    f1 = f[list(f.keys())[0]]
+    data_u = np.array(f1[list(f1.keys())[0]]['u'])
+    data_v = np.array(f1[list(f1.keys())[0]]['v'])
+    data_w = np.array(f1[list(f1.keys())[0]]['w'])
 
     # convert to torch and remove last ten layers assuming free stream
     dtype = torch.float16 if args.amp else torch.float32
@@ -71,6 +64,7 @@ def hdf5_loader(path):
     data_v = torch.tensor(data_v,dtype=dtype).permute((1,0,2))[:-9,:,:]
     data_w = torch.tensor(data_w,dtype=dtype).permute((1,0,2))[:-9,:,:]
 
+    # normalise data to -1:1
     data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
     data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
     data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
@@ -218,6 +212,25 @@ class autoencoder(nn.Module):
         out_x = self.conv8(conv7)
         return out_x
 
+# compression part - export latent space
+class encoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.leaky_reLU = nn.LeakyReLU(0.2)
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(32)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.conv4 = nn.Conv2d(64, 16, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn4 = nn.BatchNorm2d(16)
+    def forward(self, inp_x):
+        conv1 = self.leaky_reLU(self.bn1(self.conv1(inp_x)))
+        conv2 = self.leaky_reLU(self.bn2(self.conv2(conv1)))
+        conv3 = self.leaky_reLU(self.bn3(self.conv3(conv2)))
+        return self.leaky_reLU(self.bn4(self.conv4(conv3)))
+
 # save state of the training
 def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best):
     rt = time.time()
@@ -290,10 +303,10 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
             inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
             predictions = model(inputs).float()
             loss = loss_function(predictions, inputs)
-            test_loss+= loss.item()/inputs.shape[0]
+            test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             mean_sqr_diff.append(\
-                torch.mean(torch.square(predictions-inputs)).item())
+                torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs))).item())
 
     # mean from dataset (ignore if just 1 dataset)
     if count>1:
@@ -308,15 +321,28 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
-    avg_test_loss = par_mean(test_loss,gwsize)
-    avg_test_loss = float(np.float_(avg_test_loss.data.cpu().numpy()))
-    avg_mean_sqr_diff = par_mean(mean_sqr_diff,gwsize)
-    avg_mean_sqr_diff = float(np.float_(avg_mean_sqr_diff.data.cpu().numpy()))
+    avg_test_loss = par_mean(test_loss,gwsize).cpu()
+    avg_mean_sqr_diff = par_mean(mean_sqr_diff,gwsize).cpu()
     if grank==0:
         print(f'DEBUG: avg_test_loss: {avg_test_loss}')
         print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
 
     return avg_mean_sqr_diff
+
+# encode export
+def encode_exp(encode, device, train_loader, grank):
+    for batch_ndx, (samples) in enumerate(train_loader):
+        inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+        predictions = encode(inputs).float()
+
+        # export the data
+        ini = inputs.to('cpu').detach().numpy()
+        res = predictions.to('cpu').detach().numpy()
+        h5f = h5py.File('./test_'+str(batch_ndx)+'_'+str(grank)+'.h5', 'w')
+        h5f.create_dataset('ini', data=ini)
+        h5f.create_dataset('res', data=res)
+        h5f.close()
+        break
 
 # PARALLEL HELPERS
 # sum of field over GPGPUs
@@ -593,12 +619,23 @@ def main():
         if args.benchrun:
             print(f'TIMER: total epoch-2 time: {lt-et-first_ep_t} s')
             print(f'TIMER: average epoch-2 time: {(lt-et-first_ep_t)/(args.epochs-2)} s')
-        print('DEBUG: memory req:',int(torch.cuda.memory_reserved(lrank)/1024/1024),'MB') \
+        print('DEBUG: memory req:',int(torch.cuda.max_memory_reserved(lrank)/1024/1024),'MB') \
                 if args.cuda else 'DEBUG: memory req: - MB'
         print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
 
 # start testing loop
     avg_mean_sqr_diff = test(distrib_model, loss_function, device, test_loader, grank, gwsize)
+
+# export first batch's latent space if needed (Turn to True)
+    if False:
+        encode = encoder().to(device)
+        # distribute model to workers
+        if args.cuda:
+            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode,\
+                device_ids=[device], output_device=device)
+        else:
+            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode)
+        encode_exp(distrib_encode, device, train_loader, grank)
 
 # clean-up
     if grank==0:
