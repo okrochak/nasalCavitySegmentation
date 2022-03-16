@@ -65,21 +65,19 @@ def hdf5_loader(path):
     data_w = torch.tensor(data_w,dtype=dtype).permute((1,0,2))[:-9,:,:]
 
     # normalise data to -1:1
-    data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
-    data_v = 2*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1
-    data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
+    data_u = 2.0*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1.0
+    data_v = 2.0*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1.0
+    data_w = 2.0*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1.0
 
     # unified data structure
     nsub=250 # desired subset lenght in y-direction
     nmin=50 # minimum subset length (must be divisible for any dataset)
     ai,aj,ak = data_u.shape[:]
-    if ak%nsub!=0:
-       data_out = torch.cat((data_u, data_v, data_w)).view((ai,3,(aj//nmin),nmin,ak))
-
-       return torch.cat((data_out[:,:,:5,:,:].view((ai,3,nsub,ak)),\
-               data_out[:,:,-5:,:,:].view((ai,3,nsub,ak))),0)
-    else:
-       return torch.cat((data_u, data_v, data_w)).view((ai*(aj//nsub),3,nsub,ak))
+    data_out = torch.cat((data_u, data_v, data_w)).view((ai,3,(aj//nmin),nmin,ak))
+    mid = data_out.shape[2]//2
+    return torch.cat((data_out[:,:,:5,:,:].view((ai,3,nsub,ak)),\
+            data_out[:,:,mid-2:mid+3,:,:].view((ai,3,nsub,ak)),\
+            data_out[:,:,-5:,:,:].view((ai,3,nsub,ak))),0)
 
 # parsed settings
 def pars_ini():
@@ -297,7 +295,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
     et = time.time()
     model.eval()
     test_loss = 0.0
-    mean_sqr_diff = []
+    mean_sqr_diff = 0.0
     with torch.no_grad():
         for count, (samples) in enumerate(test_loader):
             inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
@@ -305,12 +303,8 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
             loss = loss_function(predictions, inputs)
             test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
-            mean_sqr_diff.append(\
-                torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs))).item())
-
-    # mean from dataset (ignore if just 1 dataset)
-    if count>1:
-        mean_sqr_diff=np.mean(mean_sqr_diff)
+            mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + \
+                torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs))).item()/(count+1.0)
 
     if grank==0:
         print(f'\n--------------------------------------------------------')
@@ -321,8 +315,8 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
-    avg_test_loss = par_mean(test_loss,gwsize).cpu()
-    avg_mean_sqr_diff = par_mean(mean_sqr_diff,gwsize).cpu()
+    avg_test_loss = float(par_mean(test_loss,gwsize).cpu())
+    avg_mean_sqr_diff = float(par_mean(mean_sqr_diff,gwsize).cpu())
     if grank==0:
         print(f'DEBUG: avg_test_loss: {avg_test_loss}')
         print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
