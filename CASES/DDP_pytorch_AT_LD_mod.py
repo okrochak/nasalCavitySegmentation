@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220304a
+# version: 220318a
 
 # std libs
 import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
@@ -303,8 +303,9 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
             loss = loss_function(predictions, inputs)
             test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
-            mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + \
-                torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs))).item()/(count+1.0)
+            res = torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs)))
+            res[torch.isinf(res)] = 0.0
+            mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + res.item()/(count+1.0)
 
     if grank==0:
         print(f'\n--------------------------------------------------------')
@@ -489,9 +490,9 @@ def main():
     # restricts data loading to a subset of the dataset exclusive to the current process
     args.shuff = args.shuff and not args.testrun
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        turb_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        turb_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        test_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
 
 # distribute dataset to workers
     # persistent workers is not possible for nworker=0
