@@ -1,4 +1,4 @@
-# DL using Horovod on deepv
+# DL using Horovod on Jureca DC
 
 # source
 https://github.com/horovod/horovod
