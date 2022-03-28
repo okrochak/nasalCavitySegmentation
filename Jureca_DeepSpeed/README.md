@@ -1,4 +1,4 @@
-# DL using DeepSpeed on deepv
+# DL using DeepSpeed on Jureca DC
 
 # source
 https://github.com/microsoft/DeepSpeed
