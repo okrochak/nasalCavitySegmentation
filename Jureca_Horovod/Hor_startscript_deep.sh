@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # general configuration of the job
-#SBATCH --job-name=TorchTest
-#SBATCH --account=slfse
+#SBATCH --job-name=HorTest
+#SBATCH --account=raise-ctp1
 #SBATCH --mail-user=
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
@@ -10,38 +10,30 @@
 #SBATCH --time=00:15:00
 
 # configure node and process count on the CM
-#SBATCH --partition=dc-gpu-devel
-#SBATCH --nodes=4
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=32
+#SBATCH --partition=dc-gpu
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=32
 #SBATCH --gpus-per-node=4
 #SBATCH --exclusive
 
 # gres options have to be disabled for deepv
 #SBATCH --gres=gpu:4
 
-# parameters
-debug=false # do debug
-bs=32       # batch-size
-epochs=5    # epochs
+# command to exec
+debug=false # do nccl debug
+bs=3        # batch-size
+epochs=10   # epochs
 lr=0.01     # learning rate
 
-# AT
-dataDir="/p/scratch/raise-ctp1/T31_LD/"
-COMMAND="DDP_pytorch_AT.py"
-EXEC="$COMMAND \
-  --batch-size $bs \
-  --epochs $epochs \
-  --lr $lr \
-  --nworker $SLURM_CPUS_PER_TASK \
+dataDir='/p/scratch/raise-ctp1/T31/'
+COMMAND="Hor_pytorch_AT.py"
+EXEC=$COMMAND" --batch-size $bs 
+  --epochs $epochs
+  --lr $lr
   --data-dir $dataDir"
 
-
-### do not modify below ###
-
-
 # set modules
-ml Stages/2022 GCC OpenMPI Python cuDNN NCCL libaio
+ml Stages/2022 NVHPC ParaStationMPI/5.5.0-1-mt Python CMake NCCL cuDNN libaio HDF5 mpi-settings/CUDA
 
 # set env
 source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate
@@ -73,16 +65,9 @@ export OMP_NUM_THREADS=1
 if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
   export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 fi
+echo $OMP_NUM_THREADS
 
 # launch
-srun bash -c "torchrun \
-    --log_dir='logs' \
-    --nnodes=$SLURM_NNODES \
-    --nproc_per_node=$SLURM_GPUS_PER_NODE \
-    --rdzv_id=$SLURM_JOB_ID \
-    --rdzv_conf=is_host=$((($SLURM_NODEID)) && echo 0 || echo 1) \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
-    $EXEC"
+srun --cpu-bind=none python3 -u $EXEC
 
 # eof

@@ -1,34 +1,34 @@
 #!/bin/bash
 
 # general configuration of the job
-#SBATCH --job-name=TorchTest
-#SBATCH --account=slfse
+#SBATCH --job-name=DSTest
+#SBATCH --account=raise-ctp1
 #SBATCH --mail-user=
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
 #SBATCH --error=job.err
-#SBATCH --time=00:15:00
+#SBATCH --time=00:30:00
 
 # configure node and process count on the CM
-#SBATCH --partition=dc-gpu-devel
-#SBATCH --nodes=4
+#SBATCH --partition=dc-gpu
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-node=4
+#SBATCH --gpus-per-node=1
 #SBATCH --exclusive
 
 # gres options have to be disabled for deepv
 #SBATCH --gres=gpu:4
 
 # parameters
-debug=false # do debug
-bs=32       # batch-size
-epochs=5    # epochs
+debug=false # do nccl debug
+epochs=10   # epochs
 lr=0.01     # learning rate
+bs=96       # batch-size
 
 # AT
 dataDir="/p/scratch/raise-ctp1/T31_LD/"
-COMMAND="DDP_pytorch_AT.py"
+COMMAND="DS_pytorch_AT.py"
 EXEC="$COMMAND \
   --batch-size $bs \
   --epochs $epochs \
@@ -36,12 +36,8 @@ EXEC="$COMMAND \
   --nworker $SLURM_CPUS_PER_TASK \
   --data-dir $dataDir"
 
-
-### do not modify below ###
-
-
 # set modules
-ml Stages/2022 GCC OpenMPI Python cuDNN NCCL libaio
+ml Stages/2022 NVHPC ParaStationMPI/5.5.0-1-mt Python CMake NCCL cuDNN libaio HDF5 mpi-settings/CUDA
 
 # set env
 source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate
@@ -69,20 +65,27 @@ echo
 
 # set comm
 export CUDA_VISIBLE_DEVICES="0,1,2,3"
-export OMP_NUM_THREADS=1
 if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
   export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 fi
 
-# launch
-srun bash -c "torchrun \
-    --log_dir='logs' \
-    --nnodes=$SLURM_NNODES \
-    --nproc_per_node=$SLURM_GPUS_PER_NODE \
-    --rdzv_id=$SLURM_JOB_ID \
-    --rdzv_conf=is_host=$((($SLURM_NODEID)) && echo 0 || echo 1) \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
-    $EXEC"
+#### do not change this part
+# create node-list
+sysN=$(scontrol show hostnames)
+for i in $sysN; do
+  x+=\"$i\":[$CUDA_VISIBLE_DEVICES],
+done
+WID=`echo {${x::-1}} | base64 -w 0`
+
+# modify config file with parameters
+sed -i "2s|.*|  \"train_micro_batch_size_per_gpu\": ${bs},|" DS_config.json
+####
+
+srun python3 -m deepspeed.launcher.launch \
+  --node_rank $SLURM_PROCID \
+  --master_addr ${SLURMD_NODENAME}i \
+  --master_port 29500 \
+  --world_info $WID \
+  $EXEC --deepspeed_mpi --deepspeed_config DS_config.json
 
 # eof
