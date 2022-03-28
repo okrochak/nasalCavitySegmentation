@@ -1,4 +1,4 @@
-# DL using HeAT/PyTorch on deepv
+# DL using HeAT/PyTorch on Jureca DC
 
 # source
 https://github.com/helmholtz-analytics/heat
