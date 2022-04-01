@@ -87,15 +87,15 @@ def hdf5_loader(path):
     #    data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
     #except:
         # large datase structure
+    cases_tbl = np.loadtxt(args.data_dir+'cases.dat', unpack = True)
     width_d = int(re.findall(r'\d+',path.split('/')[-6])[0])
     wavel_d = int(re.findall(r'\d+',path.split('/')[-5])[0])
     period_d = int(re.findall(r'\d+',path.split('/')[-4])[0])
     amp_d = int(re.findall(r'\d+',path.split('/')[-3])[0])
-    cases_tbl = np.loadtxt(args.data_dir+'cases.dat', unpack = True)
     for i in range(cases_tbl.shape[1]):
         if cases_tbl[1,i]==width_d and cases_tbl[2,i]==wavel_d and cases_tbl[3,i]==period_d and cases_tbl[4,i]==amp_d:
-            c_d = cases_tbl[9,i]
-            Pnet = cases_tbl[12,i]
+            c_d = 2*(cases_tbl[9,i]-cases_tbl[9,:].min())/(cases_tbl[9,:].max()-cases_tbl[9,:].min())-1
+            Pnet = 2*(cases_tbl[12,i]-cases_tbl[12,:].min())/(cases_tbl[12,:].max()-cases_tbl[12,:].min())-1
     f1 = f[list(f.keys())[0]]
     data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))[:-9,:,:]
     data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
@@ -104,7 +104,7 @@ def hdf5_loader(path):
     data_w = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['w'])).permute((1,0,2))[:-9,:,:]
     data_w = 2*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1
     return uniform_data(torch.reshape(torch.cat((data_u, data_v, data_w)),
-               (3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3))), width_d, wavel_d, period_d, amp_d, c_d, Pnet
+               (3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3))), width_d/(cases_tbl[1,:].max()), wavel_d/(cases_tbl[2,:].max()), period_d/(cases_tbl[3,:].max()), amp_d/(cases_tbl[4,:].max()), c_d, Pnet
 
 # parsed settings
 def pars_ini():
@@ -138,7 +138,7 @@ def pars_ini():
                         help='do a test run with seed (default: False)')
     parser.add_argument('--nseed', type=int, default=0,
                         help='seed integer for reproducibility (default: 0)')
-    parser.add_argument('--log-int', type=int, default=100,
+    parser.add_argument('--log-int', type=int, default=5,
                         help='log interval per training')
 
     # parallel parsers
@@ -166,21 +166,23 @@ class nn_reg(nn.Module):
         self.leaky_reLU = nn.LeakyReLU(0.2)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
-        self.dropout = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.1)
         
         #Convolutional layers
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(64)
-        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn4 = nn.BatchNorm2d(128)
-        self.fc1 = nn.Linear(24576, 512)
-        self.fc2 = nn.Linear(512, 10)
-        #self.fc3 = nn.Linear(14,10) #Inp dim - 
-        self.fc4 = nn.Linear(10, 2)
+        self.conv1 = nn.Conv2d(3, 8, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(8)
+        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(16)
+        self.conv3 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(32)
+        self.conv4 = nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn4 = nn.BatchNorm2d(32)
+        self.fc1 = nn.Linear(6144, 2048)
+        self.fc2 = nn.Linear(2048, 1024)
+        self.fc3 = nn.Linear(1024, 512)
+        self.fc4 = nn.Linear(512, 10)
+        self.fc5 = nn.Linear(14,10) #Inp dim - 
+        self.fc6 = nn.Linear(10, 2)
         #self.conv4 = nn.Conv2d(64, 16, kernel_size=3, stride=2, padding=1, bias=False)
         #self.bn4 = nn.BatchNorm2d(16)
 
@@ -190,11 +192,17 @@ class nn_reg(nn.Module):
         conv2 = self.leaky_reLU(self.bn2(self.conv2(conv1)))
         conv3 = self.leaky_reLU(self.bn3(self.conv3(conv2)))
         conv4 = torch.flatten(self.leaky_reLU(self.bn4(self.conv4(conv3))), 1)
-        fc1 = self.dropout(self.relu(self.fc1(conv4)))
-        fc2 = self.dropout(self.relu(self.fc2(fc1)))
+        #fc1 = self.dropout(self.relu(self.fc1(conv4)))
+        fc1 = self.leaky_reLU(self.fc1(conv4))
+        #fc2 = self.dropout(self.relu(self.fc2(fc1)))
+        fc2 = self.leaky_reLU(self.fc2(fc1))
         #fc2 = torch.cat((fc2, p1.unsqueeze(0).transpose(1,0), p2.unsqueeze(0).transpose(1,0), p3.unsqueeze(0).transpose(1,0), p4.unsqueeze(0).transpose(1,0)),1)
+        fc3 = self.leaky_reLU(self.fc3(fc2))
+        fc4 = self.leaky_reLU(self.fc4(fc3))
+        fc4 = torch.cat((fc4, p1.unsqueeze(0).transpose(1,0), p2.unsqueeze(0).transpose(1,0), p3.unsqueeze(0).transpose(1,0), p4.unsqueeze(0).transpose(1,0)),1)
         #fc3 = self.relu(self.fc3(fc2))
-        out_x = self.tanh(self.fc4(fc2))
+        fc5 = self.leaky_reLU(self.fc5(fc4))
+        out_x = self.tanh(self.fc6(fc5))
 
         return out_x
 
@@ -245,13 +253,14 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                   f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}')
         count+=1
 
-    if args.schedule:
-        scheduler_lr.step()
+    #if args.schedule:
+    #    scheduler_lr.step()
 
     # profiling statistics
     if grank==0:
         print('TIMER: epoch time:', time.time()-lt, 's\n')
-
+        print('Inps:', torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device)[0])
+        print('Preds:', predictions.float()[0])
     return loss_acc
 
 # test loop
@@ -264,12 +273,12 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
     with torch.no_grad():
         for inputs in test_loader:
             inps = inputs[0].view(1, -1, *(inputs[0].size()[2:])).squeeze(0).float().to(device)
-            predictions = model(inputs, inputs[1], inputs[2], inputs[3], inputs[4])
+            predictions = model(inps, inputs[1], inputs[2], inputs[3], inputs[4])
             loss = loss_function(predictions.float(), torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device))
-            test_loss+= loss.item()/inputs.shape[0]
+            test_loss+= loss.item()/inps.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             mean_sqr_diff.append(\
-                torch.mean(torch.square(predictions.float()-torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0))).item())
+                torch.mean(torch.square(predictions.float()-torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device))).item())
             count+=1
 
     # mean from dataset (ignore if just 1 dataset)
@@ -280,7 +289,9 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         print(f'\n--------------------------------------------------------')
         print(f'DEBUG: testing results:')
         print(f'TIMER: total testing time: {time.time()-et} s')
-        #if not args.testrun or not args.benchrun:
+        if not args.testrun or not args.benchrun:
+            print(f'Prediction: {predictions[0,:].cpu().detach().numpy()}\n')
+            print(f'Input: {torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0)[0,:]}\n')
             #plot_scatter(inputs[0][0].cpu().detach().numpy(), 
             #        predictions[0][0].cpu().detach().numpy(), 'test')
 
@@ -430,15 +441,15 @@ def main():
 # load datasets
     turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
         loader=hdf5_loader, extensions='.hdf5')
-    test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
+    test_data = datasets.DatasetFolder(args.data_dir+'testfolder_w1800',\
          loader=hdf5_loader, extensions='.hdf5')
 
     # restricts data loading to a subset of the dataset exclusive to the current process
     args.shuff = args.shuff and not args.testrun
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        turb_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        turb_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        test_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
 
 # distribute dataset to workers
     # persistent workers is not possible for nworker=0
@@ -469,9 +480,9 @@ def main():
 
 # optimizer
     loss_function = nn.MSELoss()
-    optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
-    scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
-    #scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
+    optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
+    #scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
+    scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
 
 # resume state 
     start_epoch = 0
