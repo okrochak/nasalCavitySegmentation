@@ -7,7 +7,10 @@
 *modify jobsys.xml if needed*
 
 # run benchmark
-`jube run jobsys.xml`
+`jube run general_jobsys.xml`
+
+# run benchmark on development partitions
+`jube run general_jobsys.xml --tag devel`
 
 # check if finalized
 `jube continue bench_run --id last`
