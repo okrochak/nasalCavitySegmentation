@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220526a
+# version: 220527a
 # python script to delete a lot of folders using many procs
 # usage: ./deleteFiles.py <folder>
 
@@ -9,11 +9,13 @@ import sys, os, tqdm, shutil, getopt, multiprocessing, time
 
 # check dataset here
 def remove_file(fn,c):
+    res = False
     try:
         os.remove(fn)
+        res = True
     except:
         pass
-    return c
+    return res, c
 
 def main(argv):
     opts, fname = getopt.getopt(argv,'hi:o:t')
@@ -38,12 +40,12 @@ def main(argv):
         tasks.append( (slist[i], i ) )
 
     # assign threads in async manner
-    for t in tasks:
-        pool.apply_async(remove_file,t)
+    res = [pool.apply_async(remove_file,t) for t in tasks]
 
-    # looking nice counter (needs testing)
+    # looking nice counter
     for i in tqdm.tqdm(range(len(tasks))):
-        pass
+        if res[i].get()[0]:
+            pass
 
     # close the threads
     pool.close()
