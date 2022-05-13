@@ -101,7 +101,7 @@ def pars_ini():
     parser.add_argument('--batch-size', type=int, default=16,
                         help='input batch size for training (default: 16)')
     parser.add_argument('--accum-iter', type=int, default=0,
-                        help='accumulate gradient update (default: 1)')
+                        help='accumulate gradient update (default: 0 - turns off)')
     parser.add_argument('--epochs', type=int, default=10,
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.01,
