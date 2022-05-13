@@ -35,21 +35,35 @@ def plot_scatter(inp_img, out_img, data_org):
     plt.savefig('vfield_recon_VAE'+data_org+str(random.randint(0,100))+'.pdf',
                     bbox_inches = 'tight', pad_inches = 0)
 
+# loader for turbulence HDF5 data
 class custom_batch:
-    def __init__(self, data):
-        transposed_data = list(zip(*data))
-        self.inp = torch.stack(transposed_data[0], 0)
-
+    def __init__(self, batch):
+        inp = [item[0].reshape(int(item[0].shape[0]/89), 89, item[0].shape[1], \
+            item[0].shape[2], item[0].shape[3]) for item in batch]
+        self.inp = torch.cat((inp))
+       
     # custom memory pinning method on custom type
     def pin_memory(self):
-        na,nb,nc,nd,ne = self.inp.shape
-        self.inp = self.inp.view((na*nb//89,89,nc,nd,ne)).pin_memory()
+        self.inp = self.inp.pin_memory()
         return self
 
 def collate_batch(batch):
     return custom_batch(batch)
 
-# loader for turbulence HDF5 data
+def uniform_data(data):
+    if data.shape[2]==300 or data.shape[2]==400 or data.shape[2]==450:
+        data_out = data.view((data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3]))
+        data_out = torch.cat((data_out[:,:,:5,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
+                             data_out[:,:,-5:,:,:].view((data.shape[0],data.shape[1],250,data.shape[3]))))
+    elif data.shape[2]==750: 
+        data_out = data.view((data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3]))
+        data_out = torch.cat((data_out[:,:,:5,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
+                            data_out[:,:,5:10,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
+                             data_out[:,:,10:,:,:].view((data.shape[0],data.shape[1],250,data.shape[3]))))
+    else:
+        data_out = data
+    return data_out
+
 def hdf5_loader(path):
     # read hdf5 w/ structures
     f = h5py.File(path, 'r')
@@ -69,15 +83,8 @@ def hdf5_loader(path):
     data_v = 2.0*(data_v-torch.min(data_v))/(torch.max(data_v)-torch.min(data_v))-1.0
     data_w = 2.0*(data_w-torch.min(data_w))/(torch.max(data_w)-torch.min(data_w))-1.0
 
-    # unified data structure
-    nsub=250 # desired subset lenght in y-direction
-    nmin=50 # minimum subset length (must be divisible for any dataset)
-    ai,aj,ak = data_u.shape[:]
-    data_out = torch.cat((data_u, data_v, data_w)).view((ai,3,(aj//nmin),nmin,ak))
-    mid = data_out.shape[2]//2
-    return torch.cat((data_out[:,:,:5,:,:].view((ai,3,nsub,ak)),\
-            data_out[:,:,mid-2:mid+3,:,:].view((ai,3,nsub,ak)),\
-            data_out[:,:,-5:,:,:].view((ai,3,nsub,ak))),0)
+    return uniform_data(torch.cat((data_u, data_v, data_w)).view(( \
+            3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3)))
 
 # parsed settings
 def pars_ini():
@@ -93,6 +100,8 @@ def pars_ini():
     # model parsers
     parser.add_argument('--batch-size', type=int, default=16,
                         help='input batch size for training (default: 16)')
+    parser.add_argument('--accum-iter', type=int, default=1,
+                        help='accumulate gradient update (default: 1)')
     parser.add_argument('--epochs', type=int, default=10,
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.01,
@@ -259,27 +268,33 @@ def seed_worker(worker_id):
 # train loop
 def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler):
     loss_acc = 0.0
+    sampler.set_epoch(epoch)
     for batch_ndx, (samples) in enumerate(train_loader):
+        do_backprop = ((batch_ndx + 1) % args.accum_iter == 0) or (batch_ndx + 1 == len(train_loader))
         inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
-        if args.amp:
-            with torch.cuda.amp.autocast():
-                optimizer.zero_grad()
-                # ===================forward=====================
-                predictions = model(inputs).float()         # Forward pass
-                loss = loss_function(predictions, inputs)   # Compute loss function
-                # ===================backward====================
-                loss.backward()                             # Backward pass
-                optimizer.step()                            # Optimizer step
-        else:
-            optimizer.zero_grad()
-            predictions = model(inputs).float()
-            loss = loss_function(predictions, inputs)
-            loss.backward()
-            optimizer.step()
+        with torch.set_grad_enabled(True):
+            if args.amp:
+                with torch.cuda.amp.autocast():
+                    # ===================forward=====================
+                    predictions = model(inputs).float()
+                    loss = loss_function(predictions, inputs) / args.accum_iter
+                    # ===================backward====================
+                    loss.backward()
+                    if do_backprop: 
+                        optimizer.step()
+                        optimizer.zero_grad()
+            else:
+                predictions = model(inputs).float()
+                loss = loss_function(predictions, inputs)
+                loss.backward()
+                if do_backprop: 
+                    optimizer.step()
+                    optimizer.zero_grad()
         loss_acc+= loss.item()
-        if batch_ndx % args.log_int == 0 and grank==0:
+        #if batch_ndx % args.log_int == 0 and grank==0:
+        if grank==0:
             print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):3.2f}% complete',\
-                  f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}')
+                    f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}, back propagation: {do_backprop}')
 
     if args.schedule:
         scheduler.step()
@@ -300,7 +315,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         for count, (samples) in enumerate(test_loader):
             inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
             predictions = model(inputs).float()
-            loss = loss_function(predictions, inputs)
+            loss = loss_function(predictions, inputs) / args.accum_iter
             test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             res = torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs)))
@@ -448,6 +463,7 @@ def main():
 
         print('DEBUG: model parsers:')
         print('DEBUG: args.batch_size:',args.batch_size)
+        print('DEBUG: args.accum_iter:',args.accum_iter)
         print('DEBUG: args.epochs:',args.epochs)
         print('DEBUG: args.lr:',args.lr)
         print('DEBUG: args.wdecay:',args.wdecay)
