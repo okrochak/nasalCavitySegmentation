@@ -80,7 +80,7 @@ srun bash -c "torchrun \
     --nnodes=$SLURM_NNODES \
     --nproc_per_node=$SLURM_GPUS_PER_NODE \
     --rdzv_id=$SLURM_JOB_ID \
-    --rdzv_conf=is_host=$((($SLURM_NODEID)) && echo 0 || echo 1) \
+    --rdzv_conf=is_host=\$(((SLURM_NODEID)) && echo 0 || echo 1) \
     --rdzv_backend=c10d \
     --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
     $EXEC"
