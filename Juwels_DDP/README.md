@@ -4,7 +4,7 @@
 https://github.com/pytorch/pytorch#from-source
 
 # current isues
-1.
+1. Outdated -- please refer to Jureca 
 
 # to-do
 1.
