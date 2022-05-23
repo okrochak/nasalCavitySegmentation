@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# author: EI
+# author: EI/RS/MA
 # version: 220211a
 
 # std libs
