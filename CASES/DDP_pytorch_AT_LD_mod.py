@@ -291,8 +291,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                     optimizer.step()
                     optimizer.zero_grad()
         loss_acc+= loss.item()
-        #if batch_ndx % args.log_int == 0 and grank==0:
-        if grank==0:
+        if batch_ndx % args.log_int == 0 and grank==0:
             print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):3.2f}% complete',\
                     f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}, back propagation: {do_backprop}')
 
