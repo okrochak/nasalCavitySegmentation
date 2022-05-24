@@ -41,7 +41,7 @@ EXEC="$COMMAND \
 
 
 # set modules
-ml Stages/2022 GCC OpenMPI Python cuDNN NCCL libaio
+ml Stages/2022 NVHPC ParaStationMPI/5.5.0-1-mt Python NCCL cuDNN libaio HDF5 mpi-settings/CUDA
 
 # set env
 source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate
@@ -84,5 +84,8 @@ srun bash -c "torchrun \
     --rdzv_backend=c10d \
     --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
     $EXEC"
+
+# replace l. 78 with below if High Performance Storage Tier (HPST) is available
+# srun --globres=fs:cscratch@just bash -c "torchrun \
 
 # eof
