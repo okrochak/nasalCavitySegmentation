@@ -9,4 +9,7 @@ source ray_tune_env/bin/activate
 
 pip3 install ray ray[tune]
 
+## optional:
+## pip3 install tensorflow tensorflow-datasets
+
 deactivate
