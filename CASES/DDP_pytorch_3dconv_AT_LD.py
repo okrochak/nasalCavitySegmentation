@@ -398,8 +398,8 @@ def main():
     btrain_sampler = BatchSampler(SequentialSampler(turbdata_cat), batch_size=args.batch_size, drop_last=False)
     btest_sampler = BatchSampler(SequentialSampler(testdata_cat), batch_size=args.batch_size, drop_last=False)
 
-    train_sampler = DistributedBatchSampler(btrain_sampler, num_replicas=gwsize, rank=lrank)
-    test_sampler = DistributedBatchSampler(btest_sampler, num_replicas=gwsize, rank=lrank)
+    train_sampler = DistributedBatchSampler(btrain_sampler, num_replicas=gwsize, rank=grank)
+    test_sampler = DistributedBatchSampler(btest_sampler, num_replicas=gwsize, rank=grank)
 
 # distribute dataset to workers
     train_loader = torch.utils.data.DataLoader(turbdata_cat, batch_sampler=train_sampler, num_workers=0, pin_memory=True, shuffle=False)

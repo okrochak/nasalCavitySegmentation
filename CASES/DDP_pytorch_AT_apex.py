@@ -427,9 +427,9 @@ def main():
     # restricts data loading to a subset of the dataset exclusive to the current process
     args.shuff = args.shuff and not args.testrun
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        turb_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        turb_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_data, num_replicas=gwsize, rank=lrank, shuffle = args.shuff)
+        test_data, num_replicas=gwsize, rank=grank, shuffle = args.shuff)
 
 # distribute dataset to workers
     # persistent workers is not possible for nworker=0

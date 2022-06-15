@@ -263,7 +263,7 @@ def main():
 
 # distribute test dataset
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_dataset, num_replicas=gwsize, rank=lrank)
+        test_dataset, num_replicas=gwsize, rank=grank)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size,
         sampler=test_sampler, num_workers=0, pin_memory=True, shuffle=False)
 

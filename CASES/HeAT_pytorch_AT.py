@@ -204,9 +204,9 @@ def main():
 
     # restricts data loading to a subset of the dataset exclusive to the current process
     train_sampler = torch.utils.data.distributed.DistributedSampler(
-        turb_data, num_replicas=gwsize, rank=lrank)
+        turb_data, num_replicas=gwsize, rank=grank)
     test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_data, num_replicas=gwsize, rank=lrank)
+        test_data, num_replicas=gwsize, rank=grank)
 
 # distribute dataset to workers
     train_loader = torch.utils.data.DataLoader(turb_data, batch_size=args.batch_size,

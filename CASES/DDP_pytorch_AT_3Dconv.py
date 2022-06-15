@@ -462,8 +462,8 @@ def main():
     btrain_sampler = BatchSampler(SequentialSampler(turb_data_cat), batch_size=args.batch_size, drop_last=False)
     btest_sampler = BatchSampler(SequentialSampler(test_data_cat), batch_size=args.batch_size, drop_last=False)
 
-    train_sampler = DistributedBatchSampler(btrain_sampler, num_replicas=gwsize, rank=lrank)
-    test_sampler = DistributedBatchSampler(btest_sampler, num_replicas=gwsize, rank=lrank)
+    train_sampler = DistributedBatchSampler(btrain_sampler, num_replicas=gwsize, rank=grank)
+    test_sampler = DistributedBatchSampler(btest_sampler, num_replicas=gwsize, rank=grank)
 
 # distribute dataset to workers
     # persistent workers is not possible for nworker=0
