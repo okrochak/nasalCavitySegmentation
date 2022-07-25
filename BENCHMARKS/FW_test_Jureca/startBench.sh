@@ -23,8 +23,8 @@ trun=false
 
 # DO NOT MODIFY BOTTOM
 # load JUBE if not loaded
-c1=$(module tablelist 2>&1 | grep JUBE)
-if [ "$c1" = '  ["JUBE"] = "2.4.1",' ] ; then
+c1=$(module tablelist 2>&1 | grep JUBE | awk '{print $1}')
+if [ -z "$c1" ] ; then
   ml JUBE
 fi
 
