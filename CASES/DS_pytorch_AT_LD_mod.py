@@ -617,12 +617,12 @@ def main():
             what1 = 'cuda' if args.cuda else 'cpu'
             print(prof.key_averages().table(sort_by='self_'+str(what1)+'_time_total'))
 
-        ## save state if found a better state
-        #is_best = loss_acc < best_acc
-        #if epoch % args.restart_int == 0 and not args.benchrun:
-        #    save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best)
-        #    # reset best_acc
-        #    best_acc = min(loss_acc, best_acc)
+        # save state if found a better state
+        is_best = loss_acc < best_acc
+        if epoch % args.restart_int == 0 and not args.benchrun:
+            save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best)
+            # reset best_acc
+            best_acc = min(loss_acc, best_acc)
 
         # printout loss and epoch
         if grank==0: 
