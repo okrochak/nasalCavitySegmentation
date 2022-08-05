@@ -15,6 +15,9 @@ import torch.optim as optim
 from torch.nn.functional import interpolate, pad
 from torchvision import datasets, transforms
 
+# DS
+import deepspeed
+
 # plot reconstruction
 def plot_scatter(inp_img, out_img, data_org):
     fig = plt.figure(figsize = (4,8))
@@ -136,6 +139,8 @@ def pars_ini():
                         help='disables GPGPUs')
     parser.add_argument('--benchrun', action='store_true', default=False,
                         help='do a bench run w/o IO (default: False)')
+    parser.add_argument('--local_rank', type=int, default=-1,
+                        help='local rank passed from distributed launcher')
 
     # optimizations
     parser.add_argument('--cudnn', action='store_true', default=False,
@@ -147,6 +152,9 @@ def pars_ini():
 
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
+
+    # parse to deepspeed
+    parser = deepspeed.add_config_arguments(parser)
 
 # network
 class autoencoder(nn.Module):
@@ -438,7 +446,7 @@ def main():
     st = time.time()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
-    dist.init_process_group(backend=args.backend)
+    deepspeed.init_distributed(dist_backend=args.backend)
 
 # deterministic testrun
     if args.testrun:
@@ -533,11 +541,13 @@ def main():
     model = autoencoder().to(device)
 
 # distribute model to workers
-    if args.cuda:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model,\
-            device_ids=[device], output_device=device)
-    else:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model)
+# Initialize DeepSpeed to use the following features
+    # 1) Distributed model
+    # 2) DeepSpeed optimizer
+    # 3) Distributed data loader
+    distrib_model, __, __, __ = deepspeed.initialize(
+        args=args, model=model, model_parameters=model.parameters(), training_data=turb_data)
+    device = distrib_model.local_rank
 
     # scale lr with #workers
     lr_scale = gwsize if args.scale_lr else 1
@@ -573,7 +583,7 @@ def main():
         if grank==0:
             print(f'WARNING: given epochs are less than the one in the restart file!\n'
                   f'WARNING: SYS.EXIT is issued')
-        dist.destroy_process_group()
+        deepspeed.sys.exit()
         sys.exit()
 
 # printout loss and epoch
@@ -666,7 +676,7 @@ def main():
 # clean-up
     if grank==0:
         print(f'TIMER: final time: {time.time()-st} s')
-    dist.destroy_process_group()
+    deepspeed.sys.exit()
 
 if __name__ == "__main__":
     main()

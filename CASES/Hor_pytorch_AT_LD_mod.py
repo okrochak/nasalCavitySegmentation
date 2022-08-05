@@ -15,6 +15,10 @@ import torch.optim as optim
 from torch.nn.functional import interpolate, pad
 from torchvision import datasets, transforms
 
+# hvd
+from filelock import FileLock
+import horovod.torch as hvd
+
 # plot reconstruction
 def plot_scatter(inp_img, out_img, data_org):
     fig = plt.figure(figsize = (4,8))
@@ -114,6 +118,8 @@ def pars_ini():
                         help='shuffle dataset (default: False)')
     parser.add_argument('--schedule', action='store_true', default=False,
                         help='enable scheduler in the training (default: False)')
+    parser.add_argument('--gradient-predivide-factor', type=float, default=1.0,
+                        help='apply gradient predivide factor in optimizer (default: 1.0)')
     parser.add_argument('--scale-lr', action='store_true', default=False,
                         help='scale lr with #workers (default_ false)')
 
@@ -136,6 +142,8 @@ def pars_ini():
                         help='disables GPGPUs')
     parser.add_argument('--benchrun', action='store_true', default=False,
                         help='do a bench run w/o IO (default: False)')
+    parser.add_argument('--use-fork', action='store_true', default=False,
+                        help='use forkserver for dataloading - problems with IB (default: False)')
 
     # optimizations
     parser.add_argument('--cudnn', action='store_true', default=False,
@@ -244,7 +252,7 @@ class encoder(nn.Module):
 def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best):
     rt = time.time()
     # find if is_best happened in any worker
-    is_best_m = par_allgather_obj(is_best,gwsize)
+    is_best_m = par_allgather_obj(is_best)
 
     if any(is_best_m):
         # find which rank is_best happened - select first rank if multiple
@@ -338,8 +346,6 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
         print(f'DEBUG: avg_test_loss: {avg_test_loss}')
         print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
 
-    return avg_mean_sqr_diff
-
 # encode export
 def encode_exp(encode, device, train_loader, grank):
     for batch_ndx, (samples) in enumerate(train_loader):
@@ -360,65 +366,19 @@ def encode_exp(encode, device, train_loader, grank):
 def par_sum(field):
     res = torch.tensor(field).float()
     res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.SUM,group=None,async_op=True).wait()
+    hvd.allreduce_(res, average=False)
     return res
 
 # mean of field over GPGPUs
-def par_mean(field,gwsize):
+def par_mean(field):
     res = torch.tensor(field).float()
     res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.SUM,group=None,async_op=True).wait()
-    res/=gwsize
-    return res
-
-# max(field) over GPGPUs
-def par_max(field):
-    res = torch.tensor(field).float()
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.MAX,group=None,async_op=True).wait()
-    return res
-
-# min(field) over GPGPUs
-def par_min(field):
-    res = torch.tensor(field).float()
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.MIN,group=None,async_op=True).wait()
-    return res
-
-# reduce field to destination with an operation
-def par_reduce(field,dest,oper):
-    '''
-    dest=0 will send the result to GPU on rank 0 (any rank is possible)
-    op=oper has to be in form "dist.ReduceOp.<oper>", where <oper> is
-      SUM
-      PRODUCT
-      MIN
-      MAX
-      BAND
-      BOR
-      BXOR
-    '''
-    res = torch.Tensor([field])
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.reduce(res,dst=dest,op=oper,group=None,async_op=False)
-    return res
-
-# gathers tensors from the whole group in a list (to all workers)
-def par_allgather(field,gwsize):
-    if args.cuda:
-        sen = torch.Tensor([field]).cuda()
-        res = [torch.Tensor([field]).cuda() for i in range(gwsize)]
-    else:
-        sen = torch.Tensor([field])
-        res = [torch.Tensor([field]) for i in range(gwsize)]
-    dist.all_gather(res,sen,group=None)
+    hvd.allreduce_(res, average=True)
     return res
 
 # gathers any object from the whole group in a list (to all workers)
-def par_allgather_obj(obj,gwsize):
-    res = [None]*gwsize
-    dist.all_gather_object(res,obj,group=None)
-    return res
+def par_allgather_obj(obj):
+    return hvd.allgather_object(obj)
 #
 #
 # MAIN
@@ -438,7 +398,7 @@ def main():
     st = time.time()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
-    dist.init_process_group(backend=args.backend)
+    hvd.init()
 
 # deterministic testrun
     if args.testrun:
@@ -447,10 +407,10 @@ def main():
         g.manual_seed(args.nseed)
 
     # get job rank info - rank==0 master gpu
-    lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node
-    gwsize = dist.get_world_size()     # global world size - per run
-    grank = dist.get_rank()            # global rank - assign per run
-    lrank = dist.get_rank()%lwsize     # local rank - assign per node
+    gwsize = hvd.size()       # global world size - per run
+    lwsize = hvd.local_size() # local world size - per node
+    grank =  hvd.rank()       # global rank - assign per run
+    lrank =  hvd.local_rank() # local rank - assign per node
 
     # some debug
     if grank==0:
@@ -518,6 +478,11 @@ def main():
 
     # deterministic testrun - the same dataset each run
     kwargs = {'worker_init_fn': seed_worker, 'generator': g} if args.testrun else {}
+    # When supported, use 'forkserver' to spawn dataloader workers instead... 
+    # issues with Infiniband implementations that are not fork-safe
+    if args.use_fork and args.nworker > 0 and hasattr(mp, '_supports_context') and \
+            mp._supports_context and 'forkserver' in mp.get_all_start_methods():
+        kwargs['multiprocessing_context'] = 'forkserver'
 
     train_loader = torch.utils.data.DataLoader(turb_data, batch_size=args.batch_size,
         sampler=train_sampler, collate_fn=collate_batch, num_workers=args.nworker, pin_memory=True,
@@ -530,14 +495,7 @@ def main():
         print(f'TIMER: read data: {time.time()-st} s\n')
 
     # create model
-    model = autoencoder().to(device)
-
-# distribute model to workers
-    if args.cuda:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model,\
-            device_ids=[device], output_device=device)
-    else:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model)
+    distrib_model = autoencoder().to(device)
 
     # scale lr with #workers
     lr_scale = gwsize if args.scale_lr else 1
@@ -549,6 +507,17 @@ def main():
     # alt.
     #optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
     #scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
+
+# distribute model to workers
+    # Horovod: broadcast parameters & optimizer state
+    hvd.broadcast_parameters(distrib_model.state_dict(), root_rank=0)
+    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
+    # Horovod: wrap optimizer with DistributedOptimizer
+    optimizer = hvd.DistributedOptimizer(optimizer, \
+                                named_parameters=distrib_model.named_parameters(), \
+                                op=hvd.Average, \
+                                gradient_predivide_factor=args.gradient_predivide_factor)
 
 # resume state
     start_epoch = 0
@@ -573,7 +542,7 @@ def main():
         if grank==0:
             print(f'WARNING: given epochs are less than the one in the restart file!\n'
                   f'WARNING: SYS.EXIT is issued')
-        dist.destroy_process_group()
+        hvd.shutdown()
         sys.exit()
 
 # printout loss and epoch
@@ -650,23 +619,19 @@ def main():
         print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
 
 # start testing loop
-    avg_mean_sqr_diff = test(distrib_model, loss_function, device, test_loader, grank, gwsize)
+    test(distrib_model, loss_function, device, test_loader, grank, gwsize)
 
-# export first batch's latent space if needed (Turn to True)
+# export first batch's latent space if needed (turn to True)
     if False:
         encode = encoder().to(device)
         # distribute model to workers
-        if args.cuda:
-            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode,\
-                device_ids=[device], output_device=device)
-        else:
-            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode)
-        encode_exp(distrib_encode, device, train_loader, grank)
+        hvd.broadcast_parameters(encode.state_dict(), root_rank=0)
+        encode_exp(encode, device, train_loader, grank)
 
 # clean-up
     if grank==0:
         print(f'TIMER: final time: {time.time()-st} s')
-    dist.destroy_process_group()
+    hvd.shutdown()
 
 if __name__ == "__main__":
     main()
