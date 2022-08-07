@@ -277,7 +277,6 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         for j in range(preds_sh[3]):
             for k in range(preds_sh[4]-2):
                 for i in range(preds_sh[2]-2):
-                    print(i)
                     weights_y[i] = weights_y[i].to(device)
                     weights_y[i].requires_grad=True
                     dphi_dy[:,:,j,k,i] = torch.sum(torch.mul(predictions[:,:,j,k:k+3,i:i+3], weights_y[i]),dim=[2,3])
