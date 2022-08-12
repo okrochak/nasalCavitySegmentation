@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220318a
+# version: 220812a
 
 # std libs
 import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
@@ -89,19 +89,18 @@ def hdf5_loader(path):
 # parsed settings
 def pars_ini():
     global args
-    parser = argparse.ArgumentParser(description='PyTorch actuated TBL')
+    parser = argparse.ArgumentParser(description='PyTorch-DDP actuated TBL')
 
     # IO parsers
     parser.add_argument('--data-dir', default='./',
-                        help='location of the training dataset in the local filesystem')
-    parser.add_argument('--restart-int', type=int, default=1,
-                        help='restart interval per epoch (default: 1)')
+                        help='location of the training dataset in the'
+                        ' local filesystem (default: ./)')
+    parser.add_argument('--restart-int', type=int, default=10,
+                        help='restart interval per epoch (default: 10)')
 
     # model parsers
     parser.add_argument('--batch-size', type=int, default=16,
                         help='input batch size for training (default: 16)')
-    parser.add_argument('--accum-iter', type=int, default=1,
-                        help='accumulate gradient update (default: 1 - turns off)')
     parser.add_argument('--epochs', type=int, default=10,
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.01,
@@ -114,16 +113,16 @@ def pars_ini():
                         help='shuffle dataset (default: False)')
     parser.add_argument('--schedule', action='store_true', default=False,
                         help='enable scheduler in the training (default: False)')
-    parser.add_argument('--scale-lr', action='store_true', default=False,
-                        help='scale lr with #workers (default_ false)')
 
     # debug parsers
     parser.add_argument('--testrun', action='store_true', default=False,
                         help='do a test run with seed (default: False)')
+    parser.add_argument('--export-latent', action='store_true', default=False,
+                        help='export the latent space on testing for debug (default: False)')
     parser.add_argument('--nseed', type=int, default=0,
                         help='seed integer for reproducibility (default: 0)')
     parser.add_argument('--log-int', type=int, default=10,
-                        help='log interval per training')
+                        help='log interval per training (default: 10)')
 
     # parallel parsers
     parser.add_argument('--backend', type=str, default='nccl',
@@ -133,7 +132,7 @@ def pars_ini():
     parser.add_argument('--prefetch', type=int, default=2,
                         help='prefetch data in DataLoader (default: 2)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables GPGPUs')
+                        help='disables GPGPUs (default: False)')
     parser.add_argument('--benchrun', action='store_true', default=False,
                         help='do a bench run w/o IO (default: False)')
 
@@ -142,11 +141,18 @@ def pars_ini():
                         help='turn on cuDNN optimizations (default: False)')
     parser.add_argument('--amp', action='store_true', default=False,
                         help='turn on Automatic Mixed Precision (default: False)')
+    parser.add_argument('--scale-lr', action='store_true', default=False,
+                        help='scale lr with #workers (default: False)')
+    parser.add_argument('--accum-iter', type=int, default=1,
+                        help='accumulate gradient update (default: 1 - turns off)')
 
     args = parser.parse_args()
 
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
+
+    # benchrun does not work with nworker>0 - turning off
+    args.benchrun = False if args.nworker > 0 else args.benchrun
 
 # network
 class autoencoder(nn.Module):
@@ -268,7 +274,8 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 # train loop
-def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler):
+def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, scheduler):
+    lt = time.time()
     loss_acc = 0.0
     sampler.set_epoch(epoch)
     for batch_ndx, (samples) in enumerate(train_loader):
@@ -304,7 +311,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     if grank==0:
         print('TIMER: epoch time:', time.time()-lt, 's\n')
 
-    return loss_acc
+    return loss_acc, time.time()-lt
 
 # test loop
 def test(model, loss_function, device, test_loader, grank, gwsize):
@@ -337,8 +344,6 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
     if grank==0:
         print(f'DEBUG: avg_test_loss: {avg_test_loss}')
         print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
-
-    return avg_mean_sqr_diff
 
 # encode export
 def encode_exp(encode, device, train_loader, grank):
@@ -464,16 +469,16 @@ def main():
 
         print('DEBUG: model parsers:')
         print('DEBUG: args.batch_size:',args.batch_size)
-        print('DEBUG: args.accum_iter:',args.accum_iter)
         print('DEBUG: args.epochs:',args.epochs)
         print('DEBUG: args.lr:',args.lr)
         print('DEBUG: args.wdecay:',args.wdecay)
         print('DEBUG: args.gamma:',args.gamma)
-        print('DEBUG: args.schedule:',args.schedule)
-        print('DEBUG: args.shuff:',args.shuff,'\n')
+        print('DEBUG: args.shuff:',args.shuff)
+        print('DEBUG: args.schedule:',args.schedule,'\n')
 
         print('DEBUG: debug parsers:')
         print('DEBUG: args.testrun:',args.testrun)
+        print('DEBUG: args.export_latent:',args.export_latent)
         print('DEBUG: args.nseed:',args.nseed)
         print('DEBUG: args.log_int:',args.log_int,'\n')
 
@@ -486,9 +491,18 @@ def main():
 
         print('DEBUG: optimisation parsers:')
         print('DEBUG: args.cudnn:',args.cudnn)
-        print('DEBUG: args.amp:',args.amp,'\n')
+        print('DEBUG: args.amp:',args.amp)
+        print('DEBUG: args.scale_lr:',args.scale_lr)
+        print('DEBUG: args.accum_iter:',args.accum_iter,'\n')
 
-    # encapsulate the model on the GPU assigned to the current process
+        print('WARNINGS:')
+        if args.benchrun and args.nworker>0:
+            print(f'WARNING: benchrun does not work with nworker>0 - turning off benchrun\n')
+        elif args.benchrun and args.epochs<3:
+            print(f'WARNING: benchrun requires atleast 3 epochs - setting epochs to 3\n')
+        else:
+            print(f'WARNING: all OK!\n')
+
     device = torch.device('cuda' if args.cuda and torch.cuda.is_available() else 'cpu',lrank)
     if args.cuda:
         torch.cuda.set_device(lrank)
@@ -550,6 +564,14 @@ def main():
     #optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
     #scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
 
+    # used lr and info on num. of parameters
+    if grank==0:
+        print(f'DEBUG: current learning rate: {args.lr*lr_scale}\n')
+        #tp_d = sum(p.numel() for p in distrib_model.parameters())
+        #print(f'DEBUG: total distributed parameters: {tp_d}')
+        tpt_d = sum(p.numel() for p in distrib_model.parameters() if p.requires_grad)
+        print(f'DEBUG: total distributed trainable parameters: {tpt_d}\n')
+
 # resume state
     start_epoch = 0
     best_acc = np.Inf
@@ -573,32 +595,32 @@ def main():
         if grank==0:
             print(f'WARNING: given epochs are less than the one in the restart file!\n'
                   f'WARNING: SYS.EXIT is issued')
-        dist.destroy_process_group()
-        sys.exit()
+    only_test = start_epoch>=args.epochs
 
 # printout loss and epoch
-    if grank==0: 
+    if grank==0 and not only_test: 
         outT = open('out_loss.dat','w')
 
 # start trainin loop
     et = time.time()
+    tot_ep_t = 0.0
     for epoch in range(start_epoch, args.epochs):
-        lt = time.time()
         # training
         if args.benchrun and epoch==args.epochs-1:
             # profiling (done on last epoch - slower!)
             with torch.autograd.profiler.profile(use_cuda=args.cuda, profile_memory=True) as prof:
-                loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr)
+                loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
+                            device, train_loader, optimizer, epoch, grank, scheduler_lr)
         else:
-            loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr)
+            loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
+                            device, train_loader, optimizer, epoch, grank, scheduler_lr)
 
-        # save first/last epoch timer
+        # save total/first/last epoch timer
+        tot_ep_t += train_t 
         if epoch == start_epoch:
-            first_ep_t = time.time()-lt
+            first_ep_t = train_t 
         if epoch == args.epochs-1:
-            last_ep_t = time.time()-lt
+            last_ep_t = train_t 
 
         # printout profiling results of the last epoch
         if args.benchrun and epoch==args.epochs-1 and grank==0:
@@ -623,37 +645,41 @@ def main():
             torch.cuda.empty_cache()
 
     # close file
-    if grank==0: 
+    if grank==0 and not only_test: 
         outT.close()
 
 # finalise training
     # save final state
-    if not args.benchrun:
+    if not args.benchrun and not only_test: 
         save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,True)
 
  # some debug
-    if grank==0:
+    if grank==0 and not only_test: 
+        done_epochs = args.epochs - start_epoch
         print(f'\n--------------------------------------------------------')
         print(f'DEBUG: training results:')
         print(f'TIMER: first epoch time: {first_ep_t} s')
         print(f'TIMER: last epoch time: {last_ep_t} s')
-        print(f'TIMER: total epoch time: {time.time()-et} s')
-        print(f'TIMER: average epoch time: {(time.time()-et)/args.epochs} s')
+        print(f'TIMER: total epoch time: {tot_ep_t} s')
+        print(f'TIMER: average epoch time: {tot_ep_t/done_epochs} s')
         if epoch > 1:
-            print(f'TIMER: total epoch-1 time: {time.time()-et-first_ep_t} s')
-            print(f'TIMER: average epoch-1 time: {(time.time()-et-first_ep_t)/(args.epochs-1)} s')
+            tot_ep_tm1 = tot_ep_t - first_ep_t
+            print(f'TIMER: total epoch-1 time: {tot_ep_tm1} s')
+            print(f'TIMER: average epoch-1 time: {tot_ep_tm1/(done_epochs-1)} s')
         if args.benchrun:
-            print(f'TIMER: total epoch-2 time: {lt-et-first_ep_t} s')
-            print(f'TIMER: average epoch-2 time: {(lt-et-first_ep_t)/(args.epochs-2)} s')
-        print('DEBUG: memory req:',int(torch.cuda.max_memory_reserved(lrank)/1024/1024),'MB') \
+            tot_ep_tm2 = tot_ep_t - first_ep_t - last_ep_t
+            print(f'TIMER: total epoch-2 time: {tot_ep_tm2} s')
+            print(f'TIMER: average epoch-2 time: {tot_ep_tm2/(done_epochs-2)} s')
+        # memory on worker 0
+        print('DEBUG: memory req:',int(torch.cuda.max_memory_reserved(0)/1024/1024),'MB') \
                 if args.cuda else 'DEBUG: memory req: - MB'
         print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
 
 # start testing loop
-    avg_mean_sqr_diff = test(distrib_model, loss_function, device, test_loader, grank, gwsize)
+    test(distrib_model, loss_function, device, test_loader, grank, gwsize)
 
 # export first batch's latent space if needed (Turn to True)
-    if False:
+    if args.export_latent:
         encode = encoder().to(device)
         # distribute model to workers
         if args.cuda:
