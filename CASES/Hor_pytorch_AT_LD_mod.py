@@ -556,7 +556,7 @@ def main():
     # Horovod: wrap optimizer with DistributedOptimizer
     optimizer = hvd.DistributedOptimizer(optimizer, \
                                 named_parameters=distrib_model.named_parameters(), \
-                                op=hvd.Average, \
+                                op=hvd.Adasum if args.use_adasum else hvd.Average, \
                                 compression=compression, \
                                 gradient_predivide_factor=args.gradient_predivide_factor, \
                                 backward_passes_per_step=args.batch_per_allreduce)
