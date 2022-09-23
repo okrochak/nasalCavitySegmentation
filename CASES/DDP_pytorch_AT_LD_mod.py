@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# author: EI
-# version: 220812a
+"""
+script to train a CAE model with large actuated TBL dataset
+authors: RS, EI
+version: 220923a
+notes: modified by EI
+"""
 
 # std libs
-import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil
+import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil, logging
 import matplotlib.pyplot as plt
 
 # ml libs
@@ -41,7 +45,7 @@ class custom_batch:
         inp = [item[0].reshape(int(item[0].shape[0]/89), 89, item[0].shape[1], \
             item[0].shape[2], item[0].shape[3]) for item in batch]
         self.inp = torch.cat((inp))
-       
+
     # custom memory pinning method on custom type
     def pin_memory(self):
         self.inp = self.inp.pin_memory()
@@ -55,7 +59,7 @@ def uniform_data(data):
         data_out = data.view((data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3]))
         data_out = torch.cat((data_out[:,:,:5,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
                              data_out[:,:,-5:,:,:].view((data.shape[0],data.shape[1],250,data.shape[3]))))
-    elif data.shape[2]==750: 
+    elif data.shape[2]==750:
         data_out = data.view((data.shape[0],data.shape[1],data.shape[2]//50,50,data.shape[3]))
         data_out = torch.cat((data_out[:,:,:5,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
                             data_out[:,:,5:10,:,:].view((data.shape[0],data.shape[1],250,data.shape[3])), \
@@ -151,9 +155,6 @@ def pars_ini():
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
 
-    # benchrun does not work with nworker>0 - turning off
-    args.benchrun = False if args.nworker > 0 else args.benchrun
-
 # network
 class autoencoder(nn.Module):
     def __init__(self):
@@ -247,10 +248,10 @@ class encoder(nn.Module):
         return self.leaky_reLU(self.bn4(self.conv4(conv3)))
 
 # save state of the training
-def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best):
-    rt = time.time()
+def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
+    rt = time.perf_counter()
     # find if is_best happened in any worker
-    is_best_m = par_allgather_obj(is_best,gwsize)
+    is_best_m = par_allgather_obj(is_best)
 
     if any(is_best_m):
         # find which rank is_best happened - select first rank if multiple
@@ -265,7 +266,7 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_b
         # write on worker with is_best
         if grank == is_best_rank:
             torch.save(state,'./'+res_name)
-            print(f'DEBUG: state in {grank} is saved on epoch:{epoch} in {time.time()-rt} s')
+            logging.info('state in '+str(grank)+' is saved on epoch:'+str(epoch)+' in '+str(time.perf_counter()-rt)+' s')
 
 # deterministic dataloader
 def seed_worker(worker_id):
@@ -273,9 +274,62 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+def trace_handler(prof):
+    # do operations when a profiler calles a trace
+    #prof.export_chrome_trace("/tmp/test_trace_" + str(prof.step_num) + ".json")
+    if grank==0:
+        logging.info('profiler called a trace')
+
 # train loop
-def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, scheduler):
-    lt = time.time()
+def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, scheduler):
+    # start a timer
+    lt = time.perf_counter()
+
+    # profiler
+    """
+    - activities (iterable): list of activity groups (CPU, CUDA) to use in profiling,
+    supported values: torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA.
+    Default value: ProfilerActivity.CPU and (when available) ProfilerActivity.CUDA.
+    - schedule (callable): callable that takes step (int) as a single parameter and returns
+    ProfilerAction value that specifies the profiler action to perform at each step.
+        the profiler will skip the first ``skip_first`` steps,
+        then wait for ``wait`` steps,
+        then do the warmup for the next ``warmup`` steps,
+        then do the active recording for the next ``active`` steps and
+        then repeat the cycle starting with ``wait`` steps.
+        The optional number of cycles is specified with the ``repeat`` parameter,
+           0 means that the cycles will continue until the profiling is finished.
+    - on_trace_ready (callable): callable that is called at each step
+    when schedule returns ProfilerAction.RECORD_AND_SAVE during the profiling.
+    - record_shapes (bool): save information about operator's input shapes.
+    - profile_memory (bool): track tensor memory allocation/deallocation.
+    - with_stack (bool): record source information (file and line number) for the ops.
+    - with_flops (bool): use formula to estimate the FLOPs (floating point operations)
+    of specific operators (matrix multiplication and 2D convolution).
+    - with_modules (bool): record module hierarchy (including function names) corresponding
+    to the callstack of the op. e.g. If module A's forward call's module B's forward
+    which contains an aten::add op, then aten::add's module hierarchy is A.B
+    Note that this support exist, at the moment, only for TorchScript models and not eager mode models.
+    """
+    prof = torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CPU,
+            torch.profiler.ProfilerActivity.CUDA,
+        ],
+        # at least 3 epochs required with default wait=1, warmup=1, active=args.epochs-1, repeat=1, skip_first=0
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=args.epochs-1, repeat=1, skip_first=0),
+        #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
+        on_trace_ready=trace_handler,
+        record_shapes=False,
+        profile_memory=True,
+        with_stack=True,
+        with_flops=True,
+        with_modules=False
+    )
+    # profiler start
+    if args.benchrun:
+        prof.start()
+
     loss_acc = 0.0
     sampler.set_epoch(epoch)
     for batch_ndx, (samples) in enumerate(train_loader):
@@ -289,33 +343,48 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                     loss = loss_function(predictions, inputs) / args.accum_iter
                     # ===================backward====================
                     loss.backward()
-                    if do_backprop: 
+                    if do_backprop:
                         optimizer.step()
                         optimizer.zero_grad()
             else:
                 predictions = model(inputs).float()
                 loss = loss_function(predictions, inputs)
                 loss.backward()
-                if do_backprop: 
+                if do_backprop:
                     optimizer.step()
                     optimizer.zero_grad()
         loss_acc+= loss.item()
         if batch_ndx % args.log_int == 0 and grank==0:
             print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):3.2f}% complete',\
-                    f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}, back propagation: {do_backprop}')
+                  f' / {time.perf_counter() - lt:.2f} s / accumulated loss: {loss_acc}, back propagation: {do_backprop}')
+
+        # profiler step per batch
+        if args.benchrun:
+            prof.step()
 
     if args.schedule:
         scheduler.step()
 
-    # profiling statistics
-    if grank==0:
-        print('TIMER: epoch time:', time.time()-lt, 's\n')
+    # profiler end
+    if args.benchrun:
+        prof.stop()
 
-    return loss_acc, time.time()-lt
+    # timer for current epoch
+    if grank==0:
+        logging.info('epoch time: '+str(time.perf_counter()-lt)+' s\n')
+
+    # printout profiler
+    if args.benchrun and epoch==args.epochs-1 and grank==0:
+        print(f'\n--------------------------------------------------------')
+        print(f'DEBUG: benchmark of last epoch:\n')
+        what1 = 'cuda' if args.cuda else 'cpu'
+        print(prof.key_averages().table(sort_by='self_'+str(what1)+'_time_total', row_limit=-1))
+
+    return loss_acc, time.perf_counter()-lt
 
 # test loop
-def test(model, loss_function, device, test_loader, grank, gwsize):
-    et = time.time()
+def test(model, loss_function, device, test_loader):
+    et = time.perf_counter()
     model.eval()
     test_loss = 0.0
     mean_sqr_diff = 0.0
@@ -331,22 +400,22 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
             mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + res.item()/(count+1.0)
 
     if grank==0:
-        print(f'\n--------------------------------------------------------')
-        print(f'DEBUG: testing results:')
-        print(f'TIMER: total testing time: {time.time()-et} s')
+        logging.info('\n--------------------------------------------------------')
+        logging.info('testing results:')
+        logging.info('total testing time: '+str(time.perf_counter()-et)+' s')
         if not args.testrun and not args.benchrun:
             plot_scatter(inputs[0][0].cpu().detach().numpy(),
                     predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
-    avg_test_loss = float(par_mean(test_loss,gwsize).cpu())
-    avg_mean_sqr_diff = float(par_mean(mean_sqr_diff,gwsize).cpu())
+    avg_test_loss = float(par_mean(test_loss).cpu())
+    avg_mean_sqr_diff = float(par_mean(mean_sqr_diff).cpu())
     if grank==0:
-        print(f'DEBUG: avg_test_loss: {avg_test_loss}')
-        print(f'DEBUG: avg_mean_sqr_diff: {avg_mean_sqr_diff}\n')
+        logging.debug('avg_test_loss: '+str(avg_test_loss))
+        logging.debug('avg_mean_sqr_diff: '+str(avg_mean_sqr_diff)+'\n')
 
 # encode export
-def encode_exp(encode, device, train_loader, grank):
+def encode_exp(encode, device, train_loader):
     for batch_ndx, (samples) in enumerate(train_loader):
         inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
         predictions = encode(inputs).float()
@@ -369,7 +438,7 @@ def par_sum(field):
     return res
 
 # mean of field over GPGPUs
-def par_mean(field,gwsize):
+def par_mean(field):
     res = torch.tensor(field).float()
     res = res.cuda() if args.cuda else res.cpu()
     dist.all_reduce(res,op=dist.ReduceOp.SUM,group=None,async_op=True).wait()
@@ -409,7 +478,7 @@ def par_reduce(field,dest,oper):
     return res
 
 # gathers tensors from the whole group in a list (to all workers)
-def par_allgather(field,gwsize):
+def par_allgather(field):
     if args.cuda:
         sen = torch.Tensor([field]).cuda()
         res = [torch.Tensor([field]).cuda() for i in range(gwsize)]
@@ -420,7 +489,7 @@ def par_allgather(field,gwsize):
     return res
 
 # gathers any object from the whole group in a list (to all workers)
-def par_allgather_obj(obj,gwsize):
+def par_allgather_obj(obj):
     res = [None]*gwsize
     dist.all_gather_object(res,obj,group=None)
     return res
@@ -440,7 +509,7 @@ def main():
     program_dir = os.getcwd()
 
     # start the time.time for profiling
-    st = time.time()
+    st = time.perf_counter()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
     dist.init_process_group(backend=args.backend)
@@ -451,7 +520,8 @@ def main():
         g = torch.Generator()
         g.manual_seed(args.nseed)
 
-    # get job rank info - rank==0 master gpu
+# get job rank info -- rank==0 master gpu
+    global lwsize, gwsize, grank, lrank
     lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node
     gwsize = dist.get_world_size()     # global world size - per run
     grank = dist.get_rank()            # global rank - assign per run
@@ -459,49 +529,49 @@ def main():
 
     # some debug
     if grank==0:
-        print('TIMER: initialise:', time.time()-st, 's')
-        print('DEBUG: local ranks:', lwsize, '/ global ranks:', gwsize)
-        print('DEBUG: sys.version:',sys.version,'\n')
+        logging.basicConfig(format='%(levelname)s: %(message)s', stream=sys.stdout, level=logging.INFO)
+        logging.info('initialise: '+str(time.perf_counter()-st)+'s')
+        logging.info('local ranks: '+str(lwsize)+'/ global ranks:'+str(gwsize))
+        logging.info('sys.version: '+str(sys.version)+'\n')
 
-        print('DEBUG: IO parsers:')
-        print('DEBUG: args.data_dir:',args.data_dir)
-        print('DEBUG: args.restart_int:',args.restart_int,'\n')
+        logging.info('IO parsers:')
+        logging.info('args.data_dir: '+str(args.data_dir))
+        logging.info('args.restart_int :'+str(args.restart_int)+'\n')
 
-        print('DEBUG: model parsers:')
-        print('DEBUG: args.batch_size:',args.batch_size)
-        print('DEBUG: args.epochs:',args.epochs)
-        print('DEBUG: args.lr:',args.lr)
-        print('DEBUG: args.wdecay:',args.wdecay)
-        print('DEBUG: args.gamma:',args.gamma)
-        print('DEBUG: args.shuff:',args.shuff)
-        print('DEBUG: args.schedule:',args.schedule,'\n')
+        logging.info('model parsers: ')
+        logging.info('args.batch_size: '+str(args.batch_size))
+        logging.info('args.epochs: '+str(args.epochs))
+        logging.info('args.lr: '+str(args.lr))
+        logging.info('args.wdecay: '+str(args.wdecay))
+        logging.info('args.gamma: '+str(args.gamma))
+        logging.info('args.shuff: '+str(args.shuff))
+        logging.info('args.schedule: '+str(args.schedule)+'\n')
 
-        print('DEBUG: debug parsers:')
-        print('DEBUG: args.testrun:',args.testrun)
-        print('DEBUG: args.export_latent:',args.export_latent)
-        print('DEBUG: args.nseed:',args.nseed)
-        print('DEBUG: args.log_int:',args.log_int,'\n')
+        logging.info('debug parsers:')
+        logging.info('args.testrun: '+str(args.testrun))
+        logging.info('args.export_latent: '+str(args.export_latent))
+        logging.info('args.nseed: '+str(args.nseed))
+        logging.info('args.log_int: '+str(args.log_int)+'\n')
 
-        print('DEBUG: parallel parsers:')
-        print('DEBUG: args.backend:',args.backend)
-        print('DEBUG: args.nworker:',args.nworker)
-        print('DEBUG: args.prefetch:',args.prefetch)
-        print('DEBUG: args.cuda:',args.cuda)
-        print('DEBUG: args.benchrun:',args.benchrun,'\n')
+        logging.info('parallel parsers: ')
+        logging.info('args.backend: '+str(args.backend))
+        logging.info('args.nworker: '+str(args.nworker))
+        logging.info('args.prefetch: '+str(args.prefetch))
+        logging.info('args.cuda: '+str(args.cuda))
+        logging.info('args.benchrun: '+str(args.benchrun)+'\n')
 
-        print('DEBUG: optimisation parsers:')
-        print('DEBUG: args.cudnn:',args.cudnn)
-        print('DEBUG: args.amp:',args.amp)
-        print('DEBUG: args.scale_lr:',args.scale_lr)
-        print('DEBUG: args.accum_iter:',args.accum_iter,'\n')
+        logging.info('optimisation parsers:')
+        logging.info('args.cudnn: '+str(args.cudnn))
+        logging.info('args.amp: '+str(args.amp))
+        logging.info('args.scale_lr: '+str(args.scale_lr))
+        logging.info('args.accum_iter: '+str(args.accum_iter)+'\n')
 
-        print('WARNINGS:')
-        if args.benchrun and args.nworker>0:
-            print(f'WARNING: benchrun does not work with nworker>0 - turning off benchrun\n')
-        elif args.benchrun and args.epochs<3:
-            print(f'WARNING: benchrun requires atleast 3 epochs - setting epochs to 3\n')
-        else:
-            print(f'WARNING: all OK!\n')
+        warning1=False
+        if args.benchrun and args.epochs<3:
+            logging.warning('benchrun requires atleast 3 epochs - setting epochs to 3\n')
+            warning1=True
+        if not warning1:
+            logging.warning('all OK!\n')
 
     device = torch.device('cuda' if args.cuda and torch.cuda.is_available() else 'cpu',lrank)
     if args.cuda:
@@ -541,7 +611,7 @@ def main():
         persistent_workers=pers_w, drop_last=True, prefetch_factor=args.prefetch, **kwargs )
 
     if grank==0:
-        print(f'TIMER: read data: {time.time()-st} s\n')
+        logging.info('read data: '+str(time.perf_counter()-st)+'s\n')
 
     # create model
     model = autoencoder().to(device)
@@ -566,11 +636,11 @@ def main():
 
     # used lr and info on num. of parameters
     if grank==0:
-        print(f'DEBUG: current learning rate: {args.lr*lr_scale}\n')
+        logging.info('current learning rate: '+str(args.lr*lr_scale)+'\n')
         #tp_d = sum(p.numel() for p in distrib_model.parameters())
-        #print(f'DEBUG: total distributed parameters: {tp_d}')
+        #logging.info('total distributed parameters: '+str(tp_d))
         tpt_d = sum(p.numel() for p in distrib_model.parameters() if p.requires_grad)
-        print(f'DEBUG: total distributed trainable parameters: {tpt_d}\n')
+        logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
 # resume state
     start_epoch = 0
@@ -586,58 +656,44 @@ def main():
             distrib_model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             if grank==0:
-                print(f'WARNING: restarting from {start_epoch} epoch')
+                logging.warning('restarting from '+str(start_epoch)+' epoch!')
         except:
             if grank==0:
-                print(f'WARNING: restart file cannot be loaded, restarting!')
+                logging.warning('restart file cannot be loaded, restarting!')
 
     if start_epoch>=args.epochs:
         if grank==0:
-            print(f'WARNING: given epochs are less than the one in the restart file!\n'
-                  f'WARNING: SYS.EXIT is issued')
+            logging.warning('given epochs are less than the one in the restart file! SYS.EXIT is issued')
     only_test = start_epoch>=args.epochs
 
 # printout loss and epoch
-    if grank==0 and not only_test: 
+    if grank==0 and not only_test:
         outT = open('out_loss.dat','w')
 
 # start trainin loop
-    et = time.time()
+    et = time.perf_counter()
     tot_ep_t = 0.0
     for epoch in range(start_epoch, args.epochs):
         # training
-        if args.benchrun and epoch==args.epochs-1:
-            # profiling (done on last epoch - slower!)
-            with torch.autograd.profiler.profile(use_cuda=args.cuda, profile_memory=True) as prof:
-                loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, scheduler_lr)
-        else:
-            loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, scheduler_lr)
+        loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
+            device, train_loader, optimizer, epoch, scheduler_lr)
 
         # save total/first/last epoch timer
-        tot_ep_t += train_t 
+        tot_ep_t += train_t
         if epoch == start_epoch:
-            first_ep_t = train_t 
+            first_ep_t = train_t
         if epoch == args.epochs-1:
-            last_ep_t = train_t 
+            last_ep_t = train_t
 
-        # printout profiling results of the last epoch
-        if args.benchrun and epoch==args.epochs-1 and grank==0:
-            print(f'\n--------------------------------------------------------')
-            print(f'DEBUG: benchmark of last epoch:\n')
-            what1 = 'cuda' if args.cuda else 'cpu'
-            print(prof.key_averages().table(sort_by='self_'+str(what1)+'_time_total'))
-
-        # save state if found a better state
+       # save state if found a better state
         is_best = loss_acc < best_acc
         if epoch % args.restart_int == 0 and not args.benchrun:
-            save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best)
+            save_state(epoch, distrib_model, loss_acc, optimizer, res_name, is_best)
             # reset best_acc
             best_acc = min(loss_acc, best_acc)
 
-        # printout loss and epoch
-        if grank==0: 
+        # write out loss and epoch
+        if grank==0:
             outT.write("%4d   %5.15E\n" %(epoch, loss_acc))
 
         # empty cuda cache
@@ -645,38 +701,38 @@ def main():
             torch.cuda.empty_cache()
 
     # close file
-    if grank==0 and not only_test: 
+    if grank==0 and not only_test:
         outT.close()
 
 # finalise training
     # save final state
-    if not args.benchrun and not only_test: 
-        save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,True)
+    if not args.benchrun and not only_test:
+        save_state(epoch, distrib_model, loss_acc, optimizer, res_name, True)
 
  # some debug
-    if grank==0 and not only_test: 
+    if grank==0 and not only_test:
         done_epochs = args.epochs - start_epoch
-        print(f'\n--------------------------------------------------------')
-        print(f'DEBUG: training results:')
-        print(f'TIMER: first epoch time: {first_ep_t} s')
-        print(f'TIMER: last epoch time: {last_ep_t} s')
-        print(f'TIMER: total epoch time: {tot_ep_t} s')
-        print(f'TIMER: average epoch time: {tot_ep_t/done_epochs} s')
+        logging.info('\n--------------------------------------------------------')
+        logging.info('training results:')
+        logging.info('first epoch time: '+str(first_ep_t)+' s')
+        logging.info('last epoch time: '+str(last_ep_t)+' s')
+        logging.info('total epoch time: '+str(tot_ep_t)+' s')
+        logging.info('average epoch time: '+str(tot_ep_t/done_epochs)+' s')
         if epoch > 1:
             tot_ep_tm1 = tot_ep_t - first_ep_t
-            print(f'TIMER: total epoch-1 time: {tot_ep_tm1} s')
-            print(f'TIMER: average epoch-1 time: {tot_ep_tm1/(done_epochs-1)} s')
+            logging.info('total epoch-1 time: '+str(tot_ep_tm1)+' s')
+            logging.info('average epoch-1 time: '+str(tot_ep_tm1/(done_epochs-1))+' s')
         if args.benchrun:
             tot_ep_tm2 = tot_ep_t - first_ep_t - last_ep_t
-            print(f'TIMER: total epoch-2 time: {tot_ep_tm2} s')
-            print(f'TIMER: average epoch-2 time: {tot_ep_tm2/(done_epochs-2)} s')
+            logging.info('total epoch-2 time: '+str(tot_ep_tm2)+' s')
+            logging.info('average epoch-2 time: '+str(tot_ep_tm2/(done_epochs-2))+' s')
         # memory on worker 0
-        print('DEBUG: memory req:',int(torch.cuda.max_memory_reserved(0)/1024/1024),'MB') \
-                if args.cuda else 'DEBUG: memory req: - MB'
-        print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
+        if args.cuda:
+            logging.info('memory req: '+str(int(torch.cuda.max_memory_reserved(0)/1024/1024))+' MB')
+            logging.info('memory summary:\n'+str(torch.cuda.memory_summary(0)))
 
 # start testing loop
-    test(distrib_model, loss_function, device, test_loader, grank, gwsize)
+    test(distrib_model, loss_function, device, test_loader)
 
 # export first batch's latent space if needed (Turn to True)
     if args.export_latent:
@@ -687,11 +743,11 @@ def main():
                 device_ids=[device], output_device=device)
         else:
             distrib_encode = torch.nn.parallel.DistributedDataParallel(encode)
-        encode_exp(distrib_encode, device, train_loader, grank)
+        encode_exp(distrib_encode, device, train_loader)
 
 # clean-up
     if grank==0:
-        print(f'TIMER: final time: {time.time()-st} s')
+        logging.info('final time: '+str(time.perf_counter()-st)+' s')
     dist.destroy_process_group()
 
 if __name__ == "__main__":
