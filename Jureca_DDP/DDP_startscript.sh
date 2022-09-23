@@ -75,7 +75,7 @@ if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
 fi
 
 # launch
-srun bash -c "torchrun \
+srun --cpu-bind=none bash -c "torchrun \
     --log_dir='logs' \
     --nnodes=$SLURM_NNODES \
     --nproc_per_node=$SLURM_GPUS_PER_NODE \
@@ -85,7 +85,22 @@ srun bash -c "torchrun \
     --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
     $EXEC"
 
-# replace l. 78 with below if High Performance Storage Tier (HPST) is available
-# srun --globres=fs:cscratch@just bash -c "torchrun \
+# add --globres=fs:cscratch@just flag to l. 78 if High Performance Storage Tier (HPST)
+
+# nsys profiler: following https://gist.github.com/mcarilli/376821aa1a7182dfcf59928a7cde3223
+#srun --cpu-bind=none nsys profile \
+#        --trace=cublas,cuda,cudnn,nvtx,osrt \
+#        --sample=cpu \
+#        --stats=true \
+#        --force-overwrite=true \
+#        -o ./prof.out bash -c "torchrun \
+#        --log_dir='logs' \
+#        --nnodes=$SLURM_NNODES \
+#        --nproc_per_node=$SLURM_GPUS_PER_NODE \
+#        --rdzv_id=$SLURM_JOB_ID \
+#        --rdzv_conf=is_host=\$(((SLURM_NODEID)) && echo 0 || echo 1) \
+#        --rdzv_backend=c10d \
+#        --rdzv_endpoint='$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'i:29500 \
+#        $EXEC"
 
 # eof
