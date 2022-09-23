@@ -71,4 +71,12 @@ fi
 # launch
 srun --cpu-bind=none python3 -u $EXEC
 
+# nsys profiler: following https://gist.github.com/mcarilli/376821aa1a7182dfcf59928a7cde3223
+#srun --cpu-bind=none nsys profile \
+#        --trace=cublas,cuda,cudnn,nvtx,osrt \
+#        --sample=cpu \
+#        --stats=true \
+#        --force-overwrite=true \
+#        -o ./prof.out python3 -u $EXEC
+
 # eof
