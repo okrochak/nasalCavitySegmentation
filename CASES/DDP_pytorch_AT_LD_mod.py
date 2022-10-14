@@ -3,7 +3,7 @@
 """
 script to train a CAE model with large actuated TBL dataset
 authors: RS, EI
-version: 220923a
+version: 221014a
 notes: modified by EI
 """
 
@@ -101,14 +101,16 @@ def pars_ini():
                         ' local filesystem (default: ./)')
     parser.add_argument('--restart-int', type=int, default=10,
                         help='restart interval per epoch (default: 10)')
+    parser.add_argument('--concM', type=int, default=1,
+                        help='increase dataset size with this factor (default: 1)')
 
     # model parsers
-    parser.add_argument('--batch-size', type=int, default=16,
-                        help='input batch size for training (default: 16)')
-    parser.add_argument('--epochs', type=int, default=10,
-                        help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=0.01,
-                        help='learning rate (default: 0.01)')
+    parser.add_argument('--batch-size', type=int, default=1, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='input batch size for training (default: 1, min: 1, max: 1e9)')
+    parser.add_argument('--epochs', type=int, default=10, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='number of epochs to train (default: 10, min: 1, max: 1e9)')
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='learning rate (default: 0.001)')
     parser.add_argument('--wdecay', type=float, default=0.003,
                         help='weight decay in Adam optimizer (default: 0.003)')
     parser.add_argument('--gamma', type=float, default=0.95,
@@ -121,6 +123,8 @@ def pars_ini():
     # debug parsers
     parser.add_argument('--testrun', action='store_true', default=False,
                         help='do a test run with seed (default: False)')
+    parser.add_argument('--skipplot', action='store_true', default=False,
+                        help='skips test postprocessing (default: False)')
     parser.add_argument('--export-latent', action='store_true', default=False,
                         help='export the latent space on testing for debug (default: False)')
     parser.add_argument('--nseed', type=int, default=0,
@@ -154,6 +158,51 @@ def pars_ini():
 
     # set minimum of 3 epochs when benchmarking (last epoch produces logs)
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
+
+# debug of the run
+def debug_ini(timer):
+    if grank==0:
+        logging.basicConfig(format='%(levelname)s: %(message)s', stream=sys.stdout, level=logging.INFO)
+        logging.info('initialise: '+str(timer)+'s')
+        logging.info('local ranks: '+str(lwsize)+'/ global ranks:'+str(gwsize))
+        logging.info('sys.version: '+str(sys.version))
+        logging.info('parsers list:')
+        list_args = [x for x in vars(args)]
+        for count,name_args in enumerate(list_args):
+            logging.info('args.'+name_args+': '+str(vars(args)[list_args[count]]))
+
+        # add warning here!
+        warning1=False
+        if args.benchrun and args.epochs<3:
+            logging.warning('benchrun requires atleast 3 epochs - setting epochs to 3\n')
+            warning1=True
+        if not warning1:
+            logging.warning('all OK!\n')
+
+    return logging
+
+# debug of the training
+def debug_final(logging,start_epoch,last_epoch,first_ep_t,last_ep_t,tot_ep_t):
+    if grank==0:
+        done_epochs = last_epoch - start_epoch + 1
+        logging.info('\n--------------------------------------------------------')
+        logging.info('training results:')
+        logging.info('first epoch time: '+str(first_ep_t)+' s')
+        logging.info('last epoch time: '+str(last_ep_t)+' s')
+        logging.info('total epoch time: '+str(tot_ep_t)+' s')
+        logging.info('average epoch time: '+str(tot_ep_t/done_epochs)+' s')
+        if done_epochs>1:
+            tot_ep_tm1 = tot_ep_t - first_ep_t
+            logging.info('total epoch-1 time: '+str(tot_ep_tm1)+' s')
+            logging.info('average epoch-1 time: '+str(tot_ep_tm1/(done_epochs-1))+' s')
+        if args.benchrun and done_epochs>2:
+            tot_ep_tm2 = tot_ep_t - first_ep_t - last_ep_t
+            logging.info('total epoch-2 time: '+str(tot_ep_tm2)+' s')
+            logging.info('average epoch-2 time: '+str(tot_ep_tm2/(done_epochs-2))+' s')
+        # memory on worker 0
+        if args.cuda:
+            logging.info('memory req: '+str(int(torch.cuda.max_memory_reserved(0)/1024/1024))+' MB')
+            logging.info('memory summary:\n'+str(torch.cuda.memory_summary(0)))
 
 # network
 class autoencoder(nn.Module):
@@ -311,23 +360,25 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     which contains an aten::add op, then aten::add's module hierarchy is A.B
     Note that this support exist, at the moment, only for TorchScript models and not eager mode models.
     """
-    prof = torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-        ],
-        # at least 3 epochs required with default wait=1, warmup=1, active=args.epochs-1, repeat=1, skip_first=0
-        schedule=torch.profiler.schedule(wait=1, warmup=1, active=args.epochs-1, repeat=1, skip_first=0),
-        #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
-        on_trace_ready=trace_handler,
-        record_shapes=False,
-        profile_memory=True,
-        with_stack=True,
-        with_flops=True,
-        with_modules=False
-    )
-    # profiler start
     if args.benchrun:
+        # profiler options
+        prof = torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            # at least 3 epochs required with
+            # default wait=1, warmup=1, active=args.epochs, repeat=1, skip_first=0
+            schedule=torch.profiler.schedule(wait=1,warmup=1,active=args.epochs,repeat=1,skip_first=0),
+            #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
+            on_trace_ready=trace_handler,
+            record_shapes=False,
+            profile_memory=True,
+            with_stack=True,
+            with_flops=True,
+            with_modules=False
+        )
+        # profiler start
         prof.start()
 
     loss_acc = 0.0
@@ -338,10 +389,10 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         with torch.set_grad_enabled(True):
             if args.amp:
                 with torch.cuda.amp.autocast():
-                    # ===================forward=====================
+                    # forward pass
                     predictions = model(inputs).float()
                     loss = loss_function(predictions, inputs) / args.accum_iter
-                    # ===================backward====================
+                    # backward pass
                     loss.backward()
                     if do_backprop:
                         optimizer.step()
@@ -355,8 +406,9 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                     optimizer.zero_grad()
         loss_acc+= loss.item()
         if batch_ndx % args.log_int == 0 and grank==0:
-            print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):3.2f}% complete',\
-                  f' / {time.perf_counter() - lt:.2f} s / accumulated loss: {loss_acc}, back propagation: {do_backprop}')
+            print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):06.2f}% done',\
+                  f'/ loss: {loss_acc:19.16f}', end='')
+            print(f' / bp: {do_backprop}') if not do_backprop else print(f'')
 
         # profiler step per batch
         if args.benchrun:
@@ -399,20 +451,22 @@ def test(model, loss_function, device, test_loader):
             res[torch.isinf(res)] = 0.0
             mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + res.item()/(count+1.0)
 
+    # timer
     if grank==0:
-        logging.info('\n--------------------------------------------------------')
         logging.info('testing results:')
         logging.info('total testing time: '+str(time.perf_counter()-et)+' s')
-        if not args.testrun and not args.benchrun:
-            plot_scatter(inputs[0][0].cpu().detach().numpy(),
-                    predictions[0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
     avg_test_loss = float(par_mean(test_loss).cpu())
     avg_mean_sqr_diff = float(par_mean(mean_sqr_diff).cpu())
     if grank==0:
-        logging.debug('avg_test_loss: '+str(avg_test_loss))
-        logging.debug('avg_mean_sqr_diff: '+str(avg_mean_sqr_diff)+'\n')
+        logging.info('avg_test_loss: '+str(avg_test_loss))
+        logging.info('avg_mean_sqr_diff: '+str(avg_mean_sqr_diff)+'\n')
+
+    # plot comparison if needed
+    if grank==0 and not args.skipplot and not args.testrun and not args.benchrun:
+        plot_scatter(inputs[0][0].cpu().detach().numpy(),
+                predictions[0][0].cpu().detach().numpy(), 'test')
 
 # encode export
 def encode_exp(encode, device, train_loader):
@@ -522,57 +576,15 @@ def main():
 
 # get job rank info -- rank==0 master gpu
     global lwsize, gwsize, grank, lrank
-    lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node
+    lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node (0 if CPU run)
     gwsize = dist.get_world_size()     # global world size - per run
     grank = dist.get_rank()            # global rank - assign per run
     lrank = dist.get_rank()%lwsize     # local rank - assign per node
 
-    # some debug
-    if grank==0:
-        logging.basicConfig(format='%(levelname)s: %(message)s', stream=sys.stdout, level=logging.INFO)
-        logging.info('initialise: '+str(time.perf_counter()-st)+'s')
-        logging.info('local ranks: '+str(lwsize)+'/ global ranks:'+str(gwsize))
-        logging.info('sys.version: '+str(sys.version)+'\n')
+    # debug of the run
+    logging = debug_ini(time.perf_counter()-st)
 
-        logging.info('IO parsers:')
-        logging.info('args.data_dir: '+str(args.data_dir))
-        logging.info('args.restart_int :'+str(args.restart_int)+'\n')
-
-        logging.info('model parsers: ')
-        logging.info('args.batch_size: '+str(args.batch_size))
-        logging.info('args.epochs: '+str(args.epochs))
-        logging.info('args.lr: '+str(args.lr))
-        logging.info('args.wdecay: '+str(args.wdecay))
-        logging.info('args.gamma: '+str(args.gamma))
-        logging.info('args.shuff: '+str(args.shuff))
-        logging.info('args.schedule: '+str(args.schedule)+'\n')
-
-        logging.info('debug parsers:')
-        logging.info('args.testrun: '+str(args.testrun))
-        logging.info('args.export_latent: '+str(args.export_latent))
-        logging.info('args.nseed: '+str(args.nseed))
-        logging.info('args.log_int: '+str(args.log_int)+'\n')
-
-        logging.info('parallel parsers: ')
-        logging.info('args.backend: '+str(args.backend))
-        logging.info('args.nworker: '+str(args.nworker))
-        logging.info('args.prefetch: '+str(args.prefetch))
-        logging.info('args.cuda: '+str(args.cuda))
-        logging.info('args.benchrun: '+str(args.benchrun)+'\n')
-
-        logging.info('optimisation parsers:')
-        logging.info('args.cudnn: '+str(args.cudnn))
-        logging.info('args.amp: '+str(args.amp))
-        logging.info('args.scale_lr: '+str(args.scale_lr))
-        logging.info('args.accum_iter: '+str(args.accum_iter)+'\n')
-
-        warning1=False
-        if args.benchrun and args.epochs<3:
-            logging.warning('benchrun requires atleast 3 epochs - setting epochs to 3\n')
-            warning1=True
-        if not warning1:
-            logging.warning('all OK!\n')
-
+    # set workers and apply testrun status
     device = torch.device('cuda' if args.cuda and torch.cuda.is_available() else 'cpu',lrank)
     if args.cuda:
         torch.cuda.set_device(lrank)
@@ -587,6 +599,15 @@ def main():
         loader=hdf5_loader, extensions='.hdf5')
     test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
          loader=hdf5_loader, extensions='.hdf5')
+
+# increase dataset size if required
+    largeData = []
+    for i in range(args.concM):
+        largeData.append(turb_data)
+    turb_data = torch.utils.data.ConcatDataset(largeData)
+
+    # concat data
+    train_dataset = torch.utils.data.ConcatDataset(largeData)
 
     # restricts data loading to a subset of the dataset exclusive to the current process
     args.shuff = args.shuff and not args.testrun
@@ -643,7 +664,7 @@ def main():
         logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
 # resume state
-    start_epoch = 0
+    start_epoch = 1
     best_acc = np.Inf
     res_name='checkpoint.pth.tar'
     if os.path.isfile(res_name) and not args.benchrun:
@@ -656,15 +677,15 @@ def main():
             distrib_model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             if grank==0:
-                logging.warning('restarting from '+str(start_epoch)+' epoch!')
+                logging.warning('restarting from #'+str(start_epoch)+' epoch!')
         except:
             if grank==0:
-                logging.warning('restart file cannot be loaded, restarting!')
+                logging.warning('restart file cannot be loaded, starting from 1st epoch!')
 
-    if start_epoch>=args.epochs:
-        if grank==0:
-            logging.warning('given epochs are less than the one in the restart file! SYS.EXIT is issued')
-    only_test = start_epoch>=args.epochs
+    only_test = start_epoch>args.epochs
+    if grank==0 and only_test:
+        logging.warning('given epochs are less than the one in the restart file!')
+        logging.warning('only testing will be performed -- skipping training!')
 
 # printout loss and epoch
     if grank==0 and not only_test:
@@ -673,7 +694,7 @@ def main():
 # start trainin loop
     et = time.perf_counter()
     tot_ep_t = 0.0
-    for epoch in range(start_epoch, args.epochs):
+    for epoch in range(start_epoch, args.epochs+1):
         # training
         loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
             device, train_loader, optimizer, epoch, scheduler_lr)
@@ -682,7 +703,7 @@ def main():
         tot_ep_t += train_t
         if epoch == start_epoch:
             first_ep_t = train_t
-        if epoch == args.epochs-1:
+        if epoch == args.epochs:
             last_ep_t = train_t
 
        # save state if found a better state
@@ -709,27 +730,9 @@ def main():
     if not args.benchrun and not only_test:
         save_state(epoch, distrib_model, loss_acc, optimizer, res_name, True)
 
- # some debug
-    if grank==0 and not only_test:
-        done_epochs = args.epochs - start_epoch
-        logging.info('\n--------------------------------------------------------')
-        logging.info('training results:')
-        logging.info('first epoch time: '+str(first_ep_t)+' s')
-        logging.info('last epoch time: '+str(last_ep_t)+' s')
-        logging.info('total epoch time: '+str(tot_ep_t)+' s')
-        logging.info('average epoch time: '+str(tot_ep_t/done_epochs)+' s')
-        if epoch > 1:
-            tot_ep_tm1 = tot_ep_t - first_ep_t
-            logging.info('total epoch-1 time: '+str(tot_ep_tm1)+' s')
-            logging.info('average epoch-1 time: '+str(tot_ep_tm1/(done_epochs-1))+' s')
-        if args.benchrun:
-            tot_ep_tm2 = tot_ep_t - first_ep_t - last_ep_t
-            logging.info('total epoch-2 time: '+str(tot_ep_tm2)+' s')
-            logging.info('average epoch-2 time: '+str(tot_ep_tm2/(done_epochs-2))+' s')
-        # memory on worker 0
-        if args.cuda:
-            logging.info('memory req: '+str(int(torch.cuda.max_memory_reserved(0)/1024/1024))+' MB')
-            logging.info('memory summary:\n'+str(torch.cuda.memory_summary(0)))
+# debug final results
+    if not only_test:
+        debug_final(logging, start_epoch, epoch, first_ep_t, last_ep_t, tot_ep_t)
 
 # start testing loop
     test(distrib_model, loss_function, device, test_loader)
