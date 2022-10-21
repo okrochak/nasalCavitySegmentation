@@ -1,6 +1,8 @@
-torch==1.9.0+rocm4.0.1
-torchvision==0.10.0
-matplotlib==3.4.3
-pyyaml==5.4.1
-wheel==0.37.0
-h5py==3.4.0
+torch==1.12.1+rocm5.1.1
+torchvision==0.13.1+rocm5.1.1
+torchaudio==0.12.1+rocm5.1.1
+datasets
+matplotlib
+h5py
+pytorch-nlp
+wheel

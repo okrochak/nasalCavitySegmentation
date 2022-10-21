@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # general configuration of the job
-#SBATCH --job-name=DT
+#SBATCH --job-name=TorchTest
 #SBATCH -D .
 #SBATCH --qos=bsc_case
 #SBATCH --time=03:00:00
@@ -27,15 +27,15 @@ lr=0.001    # learning rate
 
 # MNIST
 #dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
-#COMMAND="DS_pytorch_mnist.py --concM 100"
+#COMMAND="DDP_pytorch_mnist.py --concM 100"
 
 # ATBL - small
 #dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/'
-#COMMAND="DS_pytorch_AT.py"
+#COMMAND="DDP_pytorch_AT.py"
 
 # ATBL - large
 dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31_LD/'
-COMMAND="DS_pytorch_AT_LD_mod.py"
+COMMAND="DDP_pytorch_AT_LD_mod.py"
 
 EXEC=$COMMAND" --batch-size $bs \
   --epochs $epochs \
@@ -80,25 +80,13 @@ fi
 echo
 export MIOPEN_DEBUG_DISABLE_FIND_DB=1
 
-#### do not change this part
-# create node-list
-sysN=$(eval "scontrol show hostnames")
-for i in $sysN; do
-  x+=\"$i\":[$CUDA_VISIBLE_DEVICES],
-done
-WID=`echo {${x::-1}} | base64 -w 0`
-
-# modify config file with parameters
-sed -i "2s|.*|  \"train_micro_batch_size_per_gpu\": ${bs},|" DS_config.json
-sed -i "7s|.*|      \"lr\": ${lr}|" DS_config.json
-####
-
-# launch
-srun --cpu-bind=none python -m deepspeed.launcher.launch \
-  --node_rank $SLURM_PROCID \
-  --master_addr $SLURMD_NODENAME \
-  --master_port 29500 \
-  --world_info $WID \
-  $EXEC --deepspeed_mpi --deepspeed_config DS_config.json
+srun --cpu-bind=none bash -c "torchrun \
+    --log_dir='logs' \
+    --nnodes=$SLURM_NNODES \
+    --nproc_per_node=$SLURM_GPUS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$SLURMD_NODENAME:29500 \
+    $EXEC"
 
 # eof

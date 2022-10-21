@@ -3,7 +3,7 @@
 """
 script to train a CAE model with large actuated TBL dataset
 authors: RS, EI
-version: 221014a
+version: 221021a
 notes: modified by EI
 """
 
@@ -185,7 +185,7 @@ def debug_ini(timer):
 def debug_final(logging,start_epoch,last_epoch,first_ep_t,last_ep_t,tot_ep_t):
     if grank==0:
         done_epochs = last_epoch - start_epoch + 1
-        logging.info('\n--------------------------------------------------------')
+        print(f'\n--------------------------------------------------------')
         logging.info('training results:')
         logging.info('first epoch time: '+str(first_ep_t)+' s')
         logging.info('last epoch time: '+str(last_ep_t)+' s')
@@ -315,7 +315,8 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
         # write on worker with is_best
         if grank == is_best_rank:
             torch.save(state,'./'+res_name)
-            logging.info('state in '+str(grank)+' is saved on epoch:'+str(epoch)+' in '+str(time.perf_counter()-rt)+' s')
+            logging.info('state in '+str(grank)+' is saved on epoch:'+str(epoch)+\
+                    ' in '+str(time.perf_counter()-rt)+' s')
 
 # deterministic dataloader
 def seed_worker(worker_id):
@@ -414,6 +415,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         if args.benchrun:
             prof.step()
 
+    # lr scheduler
     if args.schedule:
         scheduler.step()
 
@@ -562,7 +564,7 @@ def main():
     # get directory
     program_dir = os.getcwd()
 
-    # start the time.time for profiling
+    # start the time for profiling
     st = time.perf_counter()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
@@ -678,7 +680,7 @@ def main():
             optimizer.load_state_dict(checkpoint['optimizer'])
             if grank==0:
                 logging.warning('restarting from #'+str(start_epoch)+' epoch!')
-        except:
+        except ValueError:
             if grank==0:
                 logging.warning('restart file cannot be loaded, starting from 1st epoch!')
 

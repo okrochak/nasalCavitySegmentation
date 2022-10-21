@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # general configuration of the job
-#SBATCH --job-name=TT
+#SBATCH --job-name=HorTest
 #SBATCH -D .
 #SBATCH --qos=bsc_case
 #SBATCH --time=03:00:00
@@ -9,50 +9,45 @@
 #SBATCH --error=job.err
 
 # configure node and process count on the CM
-#SBATCH --nodes=16
-#SBATCH --cpus-per-task=1
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=2
+#SBATCH --cpus-per-task=64
 #SBATCH --gpus-per-node=2
-#SBATCH --ntasks-per-node=1
 #SBATCH --exclusive
 
 # gres options
-#SBATCH --gres=gpu:2 
+#SBATCH --gres=gpu:2
 
 # parameters
 debug=false # do nccl debug
-bs=32      # batch-size
-epochs=10   # epochs
-cm=1        # data-size (concat dataset for MNIST)
-be='nccl'   # backend 
-lr=0.01     # learning rate
-tr=True     # plots for AT
-ri=10       # do restart interval
-li=10       # do log interval
+exp=false   # turn on experimental features 
+bs=2        # batch-size
+epochs=1    # epochs
+lr=0.001    # learning rate
 
 # MNIST
 #dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/data_MNIST/'
-#COMMAND="DDP_pytorch_mnist.py"
+#COMMAND="Hor_pytorch_mnist.py --concM 100"
 
-# AT VAE
+# ATBL - small
 #dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/'
-#COMMAND="DDP_pytorch_AT_VAE.py"
+#COMMAND="Hor_pytorch_AT.py"
 
-## AT
+# ATBL - large
 dataDir='/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31_LD/'
-COMMAND="DDP_pytorch_AT_LD.py"
+COMMAND="Hor_pytorch_AT_LD_mod.py"
 
-EXEC=$COMMAND" --batch-size $bs
-  --epochs $epochs
-  --concM $cm
-  --backend $be
-  --lr $lr
-  --restart-int $ri
-  --log-int $li
-  --data-dir $dataDir
-  --testrun"
+EXEC=$COMMAND" --batch-size $bs \
+  --epochs $epochs \
+  --lr $lr \
+  --concM $cm \
+  --use-adasum \
+  --shuff \
+  --nworker $SLURM_CPUS_PER_TASK \
+  --data-dir $dataDir"
 
 # set modules
-ml gcc openmpi rocm python
+ml bsc gcc/10.2.0 openmpi/4.0.5 rocm/5.1.1 python/3.9.1
 
 # set env
 source /gpfs/projects/bsc21/bsc21163/envAI_BSC/bin/activate
@@ -62,32 +57,33 @@ export LD_LIBRARY_PATH=/gpfs/projects/bsc21/bsc21163/envAI_BSC/lib:$LD_LIBRARY_P
 sleep 1
 
 # job info 
-echo "COMMAND: $COMMAND"
+echo "DEBUG: TIME: $(date)"
+echo "DEBUG: EXECUTE: $EXEC"
+echo "DEBUG: SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "DEBUG: SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
 echo "DEBUG: SLURM_NNODES: $SLURM_NNODES"
 echo "DEBUG: SLURM_NTASKS: $SLURM_NTASKS"
+echo "DEBUG: SLURM_CPUS_PER_TASK: $SLURM_CPUS_PER_TASK"
 echo "DEBUG: SLURM_TASKS_PER_NODE: $SLURM_TASKS_PER_NODE"
 echo "DEBUG: SLURM_SUBMIT_HOST: $SLURM_SUBMIT_HOST"
 echo "DEBUG: SLURMD_NODENAME: $SLURMD_NODENAME"
 echo "DEBUG: SLURM_NODEID: $SLURM_NODEID"
-echo "DEBUG: SLURM_LOCALID: $SLURM_LOCALID" 
-echo "DEBUG: SLURM_PROCID: $SLURM_PROCID"
 echo "DEBUG: CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 if [ "$debug" = true ] ; then
   export NCCL_DEBUG=INFO
 fi
+if [ "$exp" = true ] ; then
+  export MIOPEN_FIND_ENFORCE=4
+  export MIOPEN_DISABLE_CACHE=1 
+  export MIOPEN_ENABLE_LOGGING=1 
+  export MIOPEN_LOG_LEVEL=7
+  export MIOPEN_ENABLE_LOGGING_CMD=1
+  export MIOPEN_FIND_MODE=1
+fi
 echo
-
-# fix ROCm bug
 export MIOPEN_DEBUG_DISABLE_FIND_DB=1
 
 # launch
-srun python -m torch.distributed.run \
-    --nnodes=$SLURM_NNODES \
-    --nproc_per_node=$SLURM_GPUS_PER_NODE \
-    --rdzv_id=$SLURM_JOB_ID \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint=$SLURMD_NODENAME:29500 \
-    $EXEC
+srun --cpu-bind=none python -u $EXEC
 
 # eof

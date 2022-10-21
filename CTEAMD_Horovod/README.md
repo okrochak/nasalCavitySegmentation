@@ -13,10 +13,13 @@ use git commands in <local_folder>
 3. TBL datasets are moved to `/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/`
 
 # current isues
-1.
+1. Horovod 0.26.1 has issues when compiling, waiting for a fix
 
 # to-do
 1. 
+
+# updates
+1. updated to ROCm 5.1.1
 
 # usage
 add these commands to your batch script (on CTEAMD):\
@@ -25,10 +28,8 @@ add these commands to your batch script (on CTEAMD):\
 `export LD_LIBRARY_PATH=/gpfs/projects/bsc21/bsc21163/envAI_BSC/lib:$LD_LIBRARY_PATH`\
 `export MIOPEN_DEBUG_DISABLE_FIND_DB=1`
 
-# includes
-1. batch script `horo_startscript.sh`
-2. example script 1 `horo_pytorch_mnist.py`
-3. example script 2 `horo_pytorch_AT.py`
-
 # install (opt.)
-run `./createENV.sh`
+1. apply this fix to untared Horovod: \
+https://github.com/horovod/horovod/pull/3588/commits/141f41ea93731b9e3d2d7ecbac70fc10e0a8ec7e \
+tar the modified Horovod and install
+2. run `./createENV.sh`
