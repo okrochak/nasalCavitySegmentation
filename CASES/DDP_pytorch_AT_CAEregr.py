@@ -94,8 +94,8 @@ def hdf5_loader(path):
     amp_d = int(re.findall(r'\d+',path.split('/')[-3])[0])
     for i in range(cases_tbl.shape[1]):
         if cases_tbl[1,i]==width_d and cases_tbl[2,i]==wavel_d and cases_tbl[3,i]==period_d and cases_tbl[4,i]==amp_d:
-            c_d = 2*(cases_tbl[9,i]-cases_tbl[9,:].min())/(cases_tbl[9,:].max()-cases_tbl[9,:].min())-1
-            Pnet = 2*(cases_tbl[12,i]-cases_tbl[12,:].min())/(cases_tbl[12,:].max()-cases_tbl[12,:].min())-1
+            c_d = (cases_tbl[9,i]-cases_tbl[9,:].min())/(cases_tbl[9,:].max()-cases_tbl[9,:].min())
+            Pnet = (cases_tbl[12,i]-cases_tbl[12,:].min())/(cases_tbl[12,:].max()-cases_tbl[12,:].min())
     f1 = f[list(f.keys())[0]]
     data_u = torch.from_numpy(np.array(f1[list(f1.keys())[0]]['u'])).permute((1,0,2))[:-97,:,:]
     data_u = 2*(data_u-torch.min(data_u))/(torch.max(data_u)-torch.min(data_u))-1
@@ -138,9 +138,9 @@ def pars_ini():
                         help='do a test run with seed (default: False)')
     parser.add_argument('--nseed', type=int, default=0,
                         help='seed integer for reproducibility (default: 0)')
-    parser.add_argument('--log-int', type=int, default=5,
+    parser.add_argument('--log-int', type=int, default=20,
                         help='log interval per training')
-    parser.add_argument('--save_hdf5', action='store_true', default=False,
+    parser.add_argument('--save_hdf5', action='store_true', default=True,
                         help='save test input and predictions to hdf5 (default: False)')
 
     # parallel parsers
@@ -168,6 +168,7 @@ class nn_reg(nn.Module):
         self.leaky_reLU = nn.LeakyReLU(0.2)
         self.relu = nn.ReLU()
         self.tanh = nn.Tanh()
+        self.sigm = nn.Sigmoid()
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.unpool = nn.MaxUnpool2d(kernel_size=2, stride=2, padding=0)
         self.dropout = nn.Dropout(p=0.1)
@@ -234,27 +235,32 @@ class nn_reg(nn.Module):
         cae_conv7 = pad(cae_conv7,(1,1,0,0)) if inp_x.shape[2]==250 or inp_x.shape[2]==450 or inp_x.shape[2]==750 else pad(cae_conv7,(1,1,1,1))
         cae_conv7 = self.leaky_reLU(cae_conv7)
 
-        out_cae = self.cae_conv8(cae_conv7)
+        #out_cae = self.cae_conv8(cae_conv7)
+        cae_out = self.tanh(self.cae_conv8(cae_conv7))
 
         #regression network
 
-        reg_conv1 = self.leaky_reLU(self.reg_bn1(self.reg_conv1(out_cae)))
+        reg_conv1 = self.leaky_reLU(self.reg_bn1(self.reg_conv1(cae_out)))
         reg_conv2 = self.leaky_reLU(self.reg_bn2(self.reg_conv2(reg_conv1)))
         reg_conv3 = self.leaky_reLU(self.reg_bn3(self.reg_conv3(reg_conv2)))
         reg_conv4 = torch.flatten(self.leaky_reLU(self.reg_bn4(self.reg_conv4(reg_conv3))), 1)
         #reg_fc1 = self.dropout(self.relu(self.reg_fc1(reg_conv4)))
-        reg_fc1 = self.leaky_reLU(self.reg_fc1(reg_conv4))
+        reg_fc1 = self.relu(self.reg_fc1(reg_conv4))
         #reg_fc2 = self.dropout(self.relu(self.reg_fc2(reg_fc1)))
-        reg_fc2 = self.leaky_reLU(self.reg_fc2(reg_fc1))
-        #reg_fc2 = torch.cat((reg_fc2, p1.unsqueeze(0).transpose(1,0), p2.unsqueeze(0).transpose(1,0), p3.unsqueeze(0).transpose(1,0), p4.unsqueeze(0).transpose(1,0)),1)
-        reg_fc3 = self.leaky_reLU(self.reg_fc3(reg_fc2))
-        reg_fc4 = self.leaky_reLU(self.reg_fc4(reg_fc3))
+        reg_fc2 = self.relu(self.reg_fc2(reg_fc1))
+        reg_fc3 = self.relu(self.reg_fc3(reg_fc2))
+        reg_fc4 = self.relu(self.reg_fc4(reg_fc3))
         reg_fc4 = torch.cat((reg_fc4, p1.unsqueeze(0).transpose(1,0), p2.unsqueeze(0).transpose(1,0), p3.unsqueeze(0).transpose(1,0), p4.unsqueeze(0).transpose(1,0)),1)
-        #reg_fc3 = self.relu(self.reg_fc3(reg_fc2))
-        reg_fc5 = self.leaky_reLU(self.reg_fc5(reg_fc4))
-        out_regr = self.tanh(self.reg_fc6(reg_fc5))
+        reg_fc5 = self.relu(self.reg_fc5(reg_fc4))
+        
+        ##Use for Pnet
+        #reg_fc6 = torch.abs(self.reg_fc6(reg_fc5))
+        
+        ##Use for Cd
+        reg_fc6 = self.reg_fc6(reg_fc5)
 
-        return [out_regr, out_cae]
+        #return [torch.Tensor([0.0]), out_cae]
+        return [reg_fc6, cae_out]
 
 # save state of the training
 def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,grank,gwsize,is_best):
@@ -283,15 +289,21 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def save_to_hdf5(inps, preds, width, wavelength, period, amplitude, count):
-    hf5 = h5py.File('/p/scratch/raise-ctp1/T31_LD_CAE_recon/TBL_sample'+str(count)+'_'+str(random.randint(0,1000))+'.h5', 'w')
-    hf5.create_dataset('inputs_NN', data=inps.cpu())
-    hf5.create_dataset('predictions_NN', data=preds.cpu())
-    hf5.create_dataset('param_width', data=width.cpu())
-    hf5.create_dataset('param_wavelength', data=wavelength.cpu())
-    hf5.create_dataset('param_period', data=period.cpu())
-    hf5.create_dataset('param_amplitude', data=amplitude.cpu())
-    hf5.close()
+def save_to_hdf5(inps, preds, preds_QoI, width, wavelength, period, amplitude, inp_Cd, inp_Pnet, count, grank):
+    hf5 = h5py.File('/p/scratch/raise-ctp1/T31_LD_CAE_recon/2DCAEregr/test_w1800/recent/TBL_CAErecon'+str(count)+'_'+str(random.randint(0,100000))+'.h5', 'w')
+    g1 = hf5.create_group(str(grank))
+    #g1.create_dataset('grank/inputs_NN', data=inps.cpu())
+    #g1.create_dataset('grank/predictions_NN', data=preds.cpu())
+    #g1.create_dataset('grank/param_width', data=width.cpu())
+    #g1.create_dataset('grank/param_wavelength', data=wavelength.cpu())
+    #g1.create_dataset('grank/param_period', data=period.cpu())
+    #g1.create_dataset('grank/param_amplitude', data=amplitude.cpu())
+    g1.create_dataset('grank/param_inp_Cd', data=inp_Cd.cpu())
+    g1.create_dataset('grank/param_inp_Pnet', data=inp_Pnet.cpu())
+    g1.create_dataset('grank/preds_QoI', data=preds_QoI.cpu())
+    dist.barrier()
+    if grank==0:
+        hf5.close()
 
 # train loop
 def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler_lr):
@@ -302,11 +314,31 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         inps = inputs[0].view(1, -1, *(inputs[0].size()[2:])).squeeze(0).float().to(device)
         # ===================forward=====================
         optimizer.zero_grad()
+        for m_name, m_param in model.named_parameters():
+            if 'cae' in m_name:
+                m_param.requires_grad = False
         predictions = model(inps, inputs[1], inputs[2], inputs[3], inputs[4])         # Forward pass
-        loss = loss_function(predictions[1].float(), inps.float()) + \
-            loss_function(predictions[0].float(), torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device))   # Compute loss function
+        
+        ## for Cd
+        loss = loss_function(predictions[0][:,0].float(), inputs[5].float().to(device))
+        
+        ## for Pnet
+        #loss = loss_function(predictions[0][:,1].float(), inputs[6].float().to(device))
+        
+        #loss = loss_function(predictions[0].float(), torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device))   # Compute loss function
         # ===================backward====================
         loss.backward()                                        # Backward pass
+        
+        ## for Cd
+        mask_wt = torch.Tensor([[1.,1.,1.,1.,1.,1.,1.,1.,1.,1.],[0.,0.,0.,0.,0.,0.,0.,0.,0.,0.]]).to(device)
+        mask_bias = torch.Tensor([1., 0.]).to(device)
+
+        ## for Pnet
+        #mask_wt = torch.Tensor([[0.,0.,0.,0.,0.,0.,0.,0.,0.,0.],[1.,1.,1.,1.,1.,1.,1.,1.,1.,1.]]).to(device)
+        #mask_bias = torch.Tensor([0., 1.]).to(device)
+        
+        model.module.reg_fc6.weight.grad = model.module.reg_fc6.weight.grad*mask_wt
+        model.module.reg_fc6.bias.grad = model.module.reg_fc6.bias.grad*mask_bias
         optimizer.step()                                       # Optimizer step
         loss_acc+= loss.item()
         if count % args.log_int == 0 and grank==0:
@@ -314,8 +346,8 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                   f' / {time.time() - lt:.2f} s / accumulated loss: {loss_acc}')
         count+=1
 
-    #if args.schedule:
-    #    scheduler_lr.step()
+    if args.schedule:
+        scheduler_lr.step()
 
     # profiling statistics
     if grank==0:
@@ -349,7 +381,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize):
             preds_acc.append(predictions[0].float())
             inps_acc.append(torch.cat((inputs[5].unsqueeze(0).float(),inputs[6].unsqueeze(0).float())).transpose(1,0).to(device))
             if args.save_hdf5:
-                save_to_hdf5(inps, predictions[1], inputs[1], inputs[2], inputs[3], inputs[4], count)
+                save_to_hdf5(inps, predictions[1], predictions[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], count, grank)
             count+=1
 
     # mean from dataset (ignore if just 1 dataset)
@@ -513,21 +545,21 @@ def main():
             torch.cuda.manual_seed(args.nseed)
 
 # load datasets
-    turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
+    turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18/Width1000',\
         loader=hdf5_loader, extensions='.hdf5')
-    turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
+    turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18/Width1200',\
         loader=hdf5_loader, extensions='.hdf5')
-    turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1600',\
+    turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18/Width1600',\
         loader=hdf5_loader, extensions='.hdf5')
     turb_data4 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
         loader=hdf5_loader, extensions='.hdf5')
 
     turb_data = torch.utils.data.ConcatDataset([turb_data1, turb_data2, turb_data3, turb_data4])
 
-    #turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
+    #turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18',\
     #    loader=hdf5_loader, extensions='.hdf5')
 
-    test_data = datasets.DatasetFolder(args.data_dir+'testfolder_w1800',\
+    test_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18/Width1800',\
          loader=hdf5_loader, extensions='.hdf5')
 
     # restricts data loading to a subset of the dataset exclusive to the current process
@@ -560,15 +592,15 @@ def main():
 # distribute model to workers
     if args.cuda:
         distrib_model = torch.nn.parallel.DistributedDataParallel(model,\
-            device_ids=[device], output_device=device)
+            device_ids=[device], output_device=device, find_unused_parameters=True)
     else:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model)
+        distrib_model = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True)
 
 # optimizer
     loss_function = nn.MSELoss()
     optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr, weight_decay=args.wdecay)
     #scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
-    scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
+    scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.0001)
 
 # resume state 
     start_epoch = 0
