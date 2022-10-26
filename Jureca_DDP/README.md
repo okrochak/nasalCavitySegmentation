@@ -20,5 +20,6 @@ discussion in: https://github.com/pytorch/pytorch/issues/73656
 
 # usage
 1. clone
-2. run `./createEnv.sh` to create env and install torch
-3. submit `sbatch DDP_startscript.sh`
+2. run `./createEnv.sh` to create env and install torch 
+3. run `./createEnv_MPI.sh` to create Conda env and install torch with MPI support
+4. submit `sbatch DDP_startscript.sh`
