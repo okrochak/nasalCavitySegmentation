@@ -278,19 +278,11 @@ class autoencoder(nn.Module):
         return out_x
 
 # compression part - export latent space
-class encoder(nn.Module):
+class encoder(autoencoder):
     def __init__(self):
         super().__init__()
-        self.leaky_reLU = nn.LeakyReLU(0.2)
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(64)
-        self.conv4 = nn.Conv2d(64, 16, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn4 = nn.BatchNorm2d(16)
     def forward(self, inp_x):
+        # part of network to be exported
         conv1 = self.leaky_reLU(self.bn1(self.conv1(inp_x)))
         conv2 = self.leaky_reLU(self.bn2(self.conv2(conv1)))
         conv3 = self.leaky_reLU(self.bn3(self.conv3(conv2)))
