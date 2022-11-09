@@ -549,21 +549,21 @@ def main():
             torch.cuda.manual_seed(args.nseed)
 
 # load datasets
-    #turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
-    #    loader=hdf5_loader, extensions='.hdf5')
-    #turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
-    #    loader=hdf5_loader, extensions='.hdf5')
-    #turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1600',\
-    #    loader=hdf5_loader, extensions='.hdf5')
-    #turb_data4 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
-    #     loader=hdf5_loader, extensions='.hdf5')
-
-    #turb_data = torch.utils.data.ConcatDataset([turb_data1, turb_data2, turb_data3, turb_data4])
-
-    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18',\
+    turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
+        loader=hdf5_loader, extensions='.hdf5')
+    turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
+        loader=hdf5_loader, extensions='.hdf5')
+    turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1600',\
+        loader=hdf5_loader, extensions='.hdf5')
+    turb_data4 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
          loader=hdf5_loader, extensions='.hdf5')
 
-    test_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
+    turb_data = torch.utils.data.ConcatDataset([turb_data1, turb_data2, turb_data3, turb_data4])
+
+    #turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18',\
+    #     loader=hdf5_loader, extensions='.hdf5')
+
+    test_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1800',\
          loader=hdf5_loader, extensions='.hdf5')
 
 
