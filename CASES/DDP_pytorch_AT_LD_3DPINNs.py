@@ -113,7 +113,7 @@ def pars_ini():
                         help='do a test run with seed (default: False)')
     parser.add_argument('--nseed', type=int, default=0,
                         help='seed integer for reproducibility (default: 0)')
-    parser.add_argument('--log-int', type=int, default=1,
+    parser.add_argument('--log-int', type=int, default=30,
                         help='log interval per training')
 
     # parallel parsers
@@ -236,15 +236,15 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 # train loop
-def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, del_y, del_z):
+def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, coords_y, del_z):
     loss_acc = 0.0
     count=0
     weights_y = []
-    for i in range(89-1):
-            weights_y.append(torch.tensor([[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))]]))
+    #for i in range(89-1):
+    #        weights_y.append(torch.tensor([[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+    #            (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+    #            (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+    #            (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))]]))
     #sampler.set_epoch(epoch)
     for inputs in train_loader:
         inps = inputs[0].permute(0,2,1,3,4).squeeze(0).float().to(device)
@@ -252,43 +252,55 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         optimizer.zero_grad()
         predictions = model(inps)         # Forward pass
         # =========== for incompressibility constraint =============
-        weights_x = torch.tensor([[0.,0.,0.],[-1/(2*del_x),0.,1/(2*del_x)],[0.,0.,0.]])
-        preds_sh = predictions.shape
-        weights_x = weights_x.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
-        weights_x.requires_grad=True
-        dphi_dx = torch.nn.functional.conv2d(predictions.reshape(preds_sh[0],preds_sh[1]*\
-                preds_sh[2],preds_sh[3], preds_sh[4]), weights_x, groups=preds_sh[1]*\
-                preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3]-2, \
-                preds_sh[4]-2)
-        dphi_dx = dphi_dx[:,:,1:-1,:,:]
+        #weights_x = torch.tensor([[0.,0.,0.],[-1/(2*del_x),0.,1/(2*del_x)],[0.,0.,0.]])
+        #preds_sh = predictions.shape
+        #weights_x = weights_x.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
+        #weights_x.requires_grad=True
+        #dphi_dx = torch.nn.functional.conv2d(predictions.reshape(preds_sh[0],preds_sh[1]*\
+        #        preds_sh[2],preds_sh[3], preds_sh[4]), weights_x, groups=preds_sh[1]*\
+        #        preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3]-2, \
+        #        preds_sh[4]-2)
+        #dphi_dx = dphi_dx[:,:,1:-1,:,:]
         
-        weights_z = torch.tensor([[0.,0.,0.],[-1/(2*del_z),0.,1/(2*del_z)],[0.,0.,0.]])
-        weights_z = weights_z.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
-        weights_z.requires_grad=True
-        dphi_dz = torch.nn.functional.conv2d(predictions.permute(0,1,2,4,3).reshape(preds_sh[0],preds_sh[1]*\
-                preds_sh[2],preds_sh[4], preds_sh[3]), weights_z, groups=preds_sh[1]*\
-                preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[4]-2, \
-                preds_sh[3]-2).permute(0,1,2,4,3)
-        dphi_dz = dphi_dz[:,:,1:-1,:,:]
+        dphi_dx = torch.gradient(predictions, spacing=del_x, dim=[4], edge_order=2)[0]
+        dphi_dy = torch.gradient(predictions, spacing=(torch.tensor(coords_y[:-9]).to(device),), dim=[2], edge_order=2)[0]
+        dphi_dz = torch.gradient(predictions, spacing=del_z, dim=[3], edge_order=2)[0]
 
-        predictions = predictions.reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4]).permute(0,1,3,4,2)
+        #weights_z = torch.tensor([[0.,0.,0.],[-1/(2*del_z),0.,1/(2*del_z)],[0.,0.,0.]])
+        #weights_z = weights_z.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
+        #weights_z.requires_grad=True
+        #dphi_dz = torch.nn.functional.conv2d(predictions.permute(0,1,2,4,3).reshape(preds_sh[0],preds_sh[1]*\
+        #        preds_sh[2],preds_sh[4], preds_sh[3]), weights_z, groups=preds_sh[1]*\
+        #        preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[4]-2, \
+        #        preds_sh[3]-2).permute(0,1,2,4,3)
+        #dphi_dz = dphi_dz[:,:,1:-1,:,:]
 
-        dphi_dy = torch.empty(preds_sh[0],preds_sh[1],preds_sh[3],preds_sh[4]-2,preds_sh[2]-2).to(device)
-        for j in range(preds_sh[3]):
-            for k in range(preds_sh[4]-2):
-                for i in range(preds_sh[2]-2):
-                    weights_y[i] = weights_y[i].to(device)
-                    weights_y[i].requires_grad=True
-                    dphi_dy[:,:,j,k,i] = torch.sum(torch.mul(predictions[:,:,j,k:k+3,i:i+3], weights_y[i]),dim=[2,3])
-        dphi_dy = dphi_dy.permute(0,1,4,2,3)[:,:,:,1:-1,:]        
+        #predictions = predictions.reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4]).permute(0,1,3,4,2)
+
+        #dphi_dy = torch.empty(preds_sh[0],preds_sh[1],preds_sh[3],preds_sh[4]-2,preds_sh[2]-2).to(device)
+        #for j in range(preds_sh[3]):
+        #    for k in range(preds_sh[4]-2):
+        #        for i in range(preds_sh[2]-2):
+        #            weights_y[i] = weights_y[i].to(device)
+        #            weights_y[i].requires_grad=True
+        #            dphi_dy[:,:,j,k,i] = torch.sum(torch.mul(predictions[:,:,j,k:k+3,i:i+3], weights_y[i]),dim=[2,3])
+        #dphi_dy = dphi_dy.permute(0,1,4,2,3)[:,:,:,1:-1,:]        
 
 
-        predictions_pinns = torch.zeros((preds_sh[0]*preds_sh[1],preds_sh[2]-2,preds_sh[3]-2,preds_sh[4]-2)).to(device)
-        predictions_pinns[torch.arange(0,preds_sh[0]*3,3),:,:,:] = (dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:])
-        predictions_pinns[torch.arange(1,preds_sh[0]*3,3),:,:,:] = (dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:])
-        predictions_pinns[torch.arange(2,preds_sh[0]*3,3),:,:,:] = (dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:])
+        #predictions_pinns = torch.zeros((preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])).to(device)
+        #predictions_pinns[torch.arange(0,preds_sh[0]*3,3),:,:,:] = (dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:])
+        #predictions_pinns[torch.arange(1,preds_sh[0]*3,3),:,:,:] = (dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:])
+        #predictions_pinns[torch.arange(2,preds_sh[0]*3,3),:,:,:] = (dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:])
 
-        loss = loss_function(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float().to(device))   # Compute loss function
+        #loss = loss_function(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float().to(device))   # Compute loss function
+
+        predictions_pinns = torch.zeros((predictions.shape[0],predictions.shape[1],predictions.shape[2],predictions.shape[3],predictions.shape[4])).to(device)
+
+        predictions_pinns[:,0,:,:,:] = dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:]
+        predictions_pinns[:,1,:,:,:] = dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:]
+        predictions_pinns[:,2,:,:,:] = dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:]
+
+        loss = loss_function(predictions_pinns.float(), inps)
 
         # ===================backward====================
         loss.backward()                                        # Backward pass
@@ -309,7 +321,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     return loss_acc
 
 # test loop
-def test(model, loss_function, device, test_loader, grank, gwsize, del_x, del_y, del_z):
+def test(model, loss_function, device, test_loader, grank, gwsize, del_x, coords_y, del_z):
     et = time.time()
     model.eval()
     test_loss = 0.0
@@ -320,52 +332,65 @@ def test(model, loss_function, device, test_loader, grank, gwsize, del_x, del_y,
             inps = inputs[0].permute(0,2,1,3,4).squeeze(0).float().to(device)
             predictions = model(inps)
 
-            weights_x = torch.tensor([[0.,0.,0.],[-1/(2*del_x),0.,1/(2*del_x)],[0.,0.,0.]])
-            preds_sh = predictions.shape
-            weights_x = weights_x.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
-            weights_x.requires_grad=True
-            dphi_dx = torch.nn.functional.conv2d(predictions.reshape(preds_sh[0],preds_sh[1]*\
-                preds_sh[2],preds_sh[3], preds_sh[4]), weights_x, groups=preds_sh[1]*\
-                preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3]-2, \
-                preds_sh[4]-2)
-            dphi_dx = dphi_dx[:,:,1:-1,:,:]
+            dphi_dx = torch.gradient(predictions, spacing=del_x, dim=[4], edge_order=2)[0]
+            dphi_dy = torch.gradient(predictions, spacing=(torch.tensor(coords_y[:-9]).to(device),), dim=[2], edge_order=2)[0]
+            dphi_dz = torch.gradient(predictions, spacing=del_z, dim=[3], edge_order=2)[0]
 
-            weights_z = torch.tensor([[0.,0.,0.],[-1/(2*del_z),0.,1/(2*del_z)],[0.,0.,0.]])
-            weights_z = weights_z.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
-            weights_z.requires_grad=True
-            dphi_dz = torch.nn.functional.conv2d(predictions.permute(0,1,2,4,3).reshape(preds_sh[0],preds_sh[1]*\
-                preds_sh[2],preds_sh[4], preds_sh[3]), weights_z, groups=preds_sh[1]*\
-                preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[4]-2, \
-                preds_sh[3]-2).permute(0,1,2,4,3)
-            dphi_dz = dphi_dz[:,:,1:-1,:,:]
+            #weights_x = torch.tensor([[0.,0.,0.],[-1/(2*del_x),0.,1/(2*del_x)],[0.,0.,0.]])
+            #preds_sh = predictions.shape
+            #weights_x = weights_x.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
+            #weights_x.requires_grad=True
+            #dphi_dx = torch.nn.functional.conv2d(predictions.reshape(preds_sh[0],preds_sh[1]*\
+            #    preds_sh[2],preds_sh[3], preds_sh[4]), weights_x, groups=preds_sh[1]*\
+            #    preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3]-2, \
+            #    preds_sh[4]-2)
+            #dphi_dx = dphi_dx[:,:,1:-1,:,:]
 
-            predictions = predictions.reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4]).permute(0,1,3,4,2)
-            weights_y = []
-            for i in range(preds_sh[2]-1):
-                weights_y.append(torch.tensor([[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                    (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                    (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
-                    (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))]]))
+            #weights_z = torch.tensor([[0.,0.,0.],[-1/(2*del_z),0.,1/(2*del_z)],[0.,0.,0.]])
+            #weights_z = weights_z.view(1, 1, 3, 3).repeat(preds_sh[1]*preds_sh[2],1,1,1).to(device)
+            #weights_z.requires_grad=True
+            #dphi_dz = torch.nn.functional.conv2d(predictions.permute(0,1,2,4,3).reshape(preds_sh[0],preds_sh[1]*\
+            #    preds_sh[2],preds_sh[4], preds_sh[3]), weights_z, groups=preds_sh[1]*\
+            #    preds_sh[2]).reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[4]-2, \
+            #    preds_sh[3]-2).permute(0,1,2,4,3)
+            #dphi_dz = dphi_dz[:,:,1:-1,:,:]
 
-            dphi_dy = torch.empty(preds_sh[0],preds_sh[1],preds_sh[3],preds_sh[4]-2,preds_sh[2]-2)
-            for j in range(preds_sh[3]):
-                for k in range(preds_sh[4]-2):
-                    for i in range(preds_sh[2]-2):
-                        weights_y[i] = weights_y[i].to(device)
-                        weights_y[i].requires_grad=True
-                        dphi_dy[:,:,j,k,i] = torch.sum(torch.mul(predictions[:,:,j,k:k+3,i:i+3], weights_y[i]),dim=[2,3])
-            dphi_dy = dphi_dy.permute(0,1,4,2,3)[:,:,:,1:-1,:] 
+            #predictions = predictions.reshape(preds_sh[0],preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4]).permute(0,1,3,4,2)
+            #weights_y = []
+            #for i in range(preds_sh[2]-1):
+            #    weights_y.append(torch.tensor([[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+            #        (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+            #        (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))],[-del_y[i+1]/(del_y[i]*(del_y[i]+del_y[i+1])),
+            #        (del_y[i+1]-del_y[i])/(del_y[i+1]*del_y[i]),del_y[i]/(del_y[i+1]*(del_y[i]+del_y[i+1]))]]))
 
-            predictions_pinns = torch.zeros((preds_sh[0]*preds_sh[1],preds_sh[2]-2,preds_sh[3]-2,preds_sh[4]-2)).to(device)
-            predictions_pinns[torch.arange(0,preds_sh[0]*3,3),:,:,:] = (dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:])
-            predictions_pinns[torch.arange(1,preds_sh[0]*3,3),:,:,:] = (dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:])
-            predictions_pinns[torch.arange(2,preds_sh[0]*3,3),:,:,:] = (dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:])
+            #dphi_dy = torch.empty(preds_sh[0],preds_sh[1],preds_sh[3],preds_sh[4]-2,preds_sh[2]-2)
+            #for j in range(preds_sh[3]):
+            #    for k in range(preds_sh[4]-2):
+            #        for i in range(preds_sh[2]-2):
+            #            weights_y[i] = weights_y[i].to(device)
+            #            weights_y[i].requires_grad=True
+            #            dphi_dy[:,:,j,k,i] = torch.sum(torch.mul(predictions[:,:,j,k:k+3,i:i+3], weights_y[i]),dim=[2,3])
+            #dphi_dy = dphi_dy.permute(0,1,4,2,3)[:,:,:,1:-1,:] 
 
-            loss = loss_function(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float().to(device))   # Compute loss function
+            #predictions_pinns = torch.zeros((preds_sh[0]*preds_sh[1],preds_sh[2]-2,preds_sh[3]-2,preds_sh[4]-2)).to(device)
+            #predictions_pinns[torch.arange(0,preds_sh[0]*3,3),:,:,:] = (dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:])
+            #predictions_pinns[torch.arange(1,preds_sh[0]*3,3),:,:,:] = (dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:])
+            #predictions_pinns[torch.arange(2,preds_sh[0]*3,3),:,:,:] = (dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:])
+
+            predictions_pinns = torch.zeros((predictions.shape[0],predictions.shape[1],predictions.shape[2],predictions.shape[3],predictions.shape[4])).to(device)
+
+            predictions_pinns[:,0,:,:,:] = dphi_dy[:,2,:,:,:]-dphi_dz[:,1,:,:,:]
+            predictions_pinns[:,1,:,:,:] = dphi_dz[:,0,:,:,:]-dphi_dx[:,2,:,:,:]
+            predictions_pinns[:,2,:,:,:] = dphi_dx[:,1,:,:,:]-dphi_dy[:,0,:,:,:]
+
+            #loss = loss_function(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float().to(device))   # Compute loss function
+            loss = loss_function(predictions_pinns.float(), inps)
+
             test_loss+= loss.item()/inps.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
-            mean_sqr_diff.append(\
-                torch.mean(torch.square(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float())).item())
+            #mean_sqr_diff.append(\
+            #    torch.mean(torch.square(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float())).item())
+            mean_sqr_diff.append(torch.mean(torch.square(predictions_pinns.float(), inps)).item())
             count+=1
 
     # mean from dataset (ignore if just 1 dataset)
@@ -378,7 +403,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize, del_x, del_y,
         print(f'TIMER: total testing time: {time.time()-et} s')
         if not args.testrun or not args.benchrun:
             plot_scatter(inps[0][0][0].cpu().detach().numpy(), 
-                    predictions[0][0][0].cpu().detach().numpy(), 'test')
+                    predictions_pinns[0][0][0].cpu().detach().numpy(), 'test')
 
     # mean from gpus
     avg_mean_sqr_diff = par_mean(mean_sqr_diff,gwsize)
@@ -524,14 +549,28 @@ def main():
             torch.cuda.manual_seed(args.nseed)
 
 # load datasets
-    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
-        loader=hdf5_loader, extensions='.hdf5')
-    test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
+    #turb_data1 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1000',\
+    #    loader=hdf5_loader, extensions='.hdf5')
+    #turb_data2 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1200',\
+    #    loader=hdf5_loader, extensions='.hdf5')
+    #turb_data3 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width1600',\
+    #    loader=hdf5_loader, extensions='.hdf5')
+    #turb_data4 = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
+    #     loader=hdf5_loader, extensions='.hdf5')
+
+    #turb_data = torch.utils.data.ConcatDataset([turb_data1, turb_data2, turb_data3, turb_data4])
+
+    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width10_12_16_18',\
          loader=hdf5_loader, extensions='.hdf5')
+
+    test_data = datasets.DatasetFolder(args.data_dir+'trainfolder/Width3000',\
+         loader=hdf5_loader, extensions='.hdf5')
+
 
     #load/specify mesh spacing data
     del_x = 0.2598
-    del_y = np.loadtxt(args.data_dir+'deltay.dat')
+    #del_y = np.loadtxt(args.data_dir+'deltay.dat')
+    coords_y = np.loadtxt(args.data_dir+'coords_y.dat')
     del_z = 0.0866
 
     # restricts data loading to a subset of the dataset exclusive to the current process
@@ -610,10 +649,10 @@ def main():
             # profiling (done on last epoch - slower!)
             with torch.autograd.profiler.profile(use_cuda=args.cuda, profile_memory=True) as prof:
                 loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, del_y, del_z)
+                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, coords_y, del_z)
         else:
             loss_acc = train(distrib_model, train_sampler, loss_function, \
-                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, del_y, del_z)
+                            device, train_loader, optimizer, epoch, grank, lt, scheduler_lr, del_x, coords_y, del_z)
 
         # save first epoch timer
         if epoch == start_epoch:
@@ -658,7 +697,7 @@ def main():
         print('DEBUG: memory summary:\n\n',torch.cuda.memory_summary(0)) if args.cuda else ''
 
 # start testing loop
-    avg_mean_sqr_diff = test(distrib_model, loss_function, device, test_loader, grank, gwsize, del_x, del_y, del_z)
+    avg_mean_sqr_diff = test(distrib_model, loss_function, device, test_loader, grank, gwsize, del_x, coords_y, del_z)
 
 # clean-up
     if grank==0:
