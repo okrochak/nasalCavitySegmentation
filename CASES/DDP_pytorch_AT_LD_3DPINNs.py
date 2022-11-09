@@ -390,7 +390,7 @@ def test(model, loss_function, device, test_loader, grank, gwsize, del_x, coords
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             #mean_sqr_diff.append(\
             #    torch.mean(torch.square(predictions_pinns.float(), inps.reshape(preds_sh[0]*preds_sh[1],preds_sh[2],preds_sh[3],preds_sh[4])[:,1:-1,1:-1,1:-1].float())).item())
-            mean_sqr_diff.append(torch.mean(torch.square(predictions_pinns.float(), inps)).item())
+            mean_sqr_diff.append(torch.mean(torch.square(predictions_pinns.float()-inps.float())).item())
             count+=1
 
     # mean from dataset (ignore if just 1 dataset)
