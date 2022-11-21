@@ -1,7 +1,7 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
 # author: EI
-# version: 220302a
+# version: 221121a
 # creates machine specific python env
 
 # set modules
@@ -16,8 +16,8 @@ echo
 cont1=false
 if [ "$sysN" = 'deepv' ] ; then
   ml use $OTHERSTAGES
-  #ml Stages/2022 GCC ParaStationMPI cuDNN NCCL Python CMake # Horovod issues with pscom??
-  ml Stages/2022 GCC OpenMPI cuDNN NCCL Python CMake
+  ml Stages/2022 GCC/11.2.0 ParaStationMPI/5.5.0-1 cuDNN/8.3.1.22-CUDA-11.5 NCCL/2.12.7-1-CUDA-11.5 Python/3.9.6 CMake/3.21.1
+  #ml Stages/2022 GCC/11.2.0 OpenMPI/4.1.2 cuDNN/8.3.1.22-CUDA-11.5 NCCL/2.12.7-1-CUDA-11.5 Python/3.9.6 CMake/3.21.1
   cont1=true
 elif [ "$sysN" = 'juwels' ] ; then
   ml GCC ParaStationMPI Python CMake
@@ -76,9 +76,19 @@ if [ -f "${cDir}/envAI_${sysN}/bin/torchrun" ]; then
 else
   export TMPDIR=${cDir}
 
+  #pip3 install \
+  #   torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1+cu113 -f \
+  #           https://download.pytorch.org/whl/cu113/torch_stable.html --no-cache-dir
+
+  ## Stages/2022 - CUDA/11.5
+  #pip3 install \
+  #   torch==1.11.0+cu115 torchvision==0.12.0+cu115 torchaudio==0.11.0+cu115 -f \
+  #           https://download.pytorch.org/whl/cu115/torch_stable.html --no-cache-dir
+
+  # Stages/2022 - CUDA/11.7
   pip3 install \
-     torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 \
-     -f https://download.pytorch.org/whl/cu113/torch_stable.html --no-cache-dir
+     torch==1.13.0+cu117 torchvision==0.14.0+cu117 torchaudio==0.13.0+cu117 -f \
+             https://download.pytorch.org/whl/cu117/torch_stable.html --no-cache-dir
 fi
 
 # install horovod
@@ -86,9 +96,18 @@ if [ -f "${cDir}/envAI_${sysN}/bin/horovodrun" ]; then
   echo 'Horovod already installed'
   echo
 else
+  pip3 install --no-cache-dir wheel
+  #export HOROVOD_DEBUG=1
   export HOROVOD_GPU=CUDA
-  export HOROVOD_GPU_OPERATIONS=NCCL
+  export HOROVOD_CUDA_HOME=$EBROOTCUDA
+  #export HOROVOD_WITH_MPI=1
+  export HOROVOD_MPI_THREADS_DISABLE=1
+  #export HOROVOD_GPU_OPERATIONS=MPI # only turn this off
+  export HOROVOD_GPU_OPERATIONS=NCCL # only turn this off
+  export HOROVOD_NCCL_HOME=$EBROOTNCCL
   export HOROVOD_WITH_PYTORCH=1
+  export HOROVOD_WITHOUT_TENSORFLOW=1
+  export HOROVOD_WITHOUT_MXNET=1
   export TMPDIR=${cDir}
 
   pip3 install --no-cache-dir horovod --ignore-installed
@@ -99,10 +118,10 @@ if [ -f "${cDir}/envAI_${sysN}/bin/deepspeed" ]; then
   echo 'DeepSpeed already installed'
   echo
 else
-  export DS_BUILD_OPS=1
+  #export DS_BUILD_OPS=1
   # if above not working?? recursion error use this
-  #export DS_BUILD_FUSED_ADAM=1
-  #export DS_BUILD_UTILS=1
+  export DS_BUILD_FUSED_ADAM=1
+  export DS_BUILD_UTILS=1
   if [ "$sysN" = 'deepv' ] ; then
     #fix libaio issues via:
     export DS_BUILD_AIO=0
@@ -111,9 +130,9 @@ else
 
   pip3 install --no-cache-dir DeepSpeed
 
-  # add this to deepspeed/launcher/launch.py l.85
+  # add this to deepspeed/launcher/launch.py l.126
   var='    args.node_rank=int(os.environ.get("SLURM_PROCID",0))'
-  sed -i "85s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
+  sed -i "126s|.*|$var|" $cDir/envAI_${sysN}/lib/python${pver}/site-packages/deepspeed/launcher/launch.py
 fi
 
 # install heat
