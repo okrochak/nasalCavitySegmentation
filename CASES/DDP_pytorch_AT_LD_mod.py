@@ -600,9 +600,6 @@ def main():
         largeData.append(turb_data)
     turb_data = torch.utils.data.ConcatDataset(largeData)
 
-    # concat data
-    train_dataset = torch.utils.data.ConcatDataset(largeData)
-
     # restricts data loading to a subset of the dataset exclusive to the current process
     args.shuff = args.shuff and not args.testrun
     train_sampler = torch.utils.data.distributed.DistributedSampler(
