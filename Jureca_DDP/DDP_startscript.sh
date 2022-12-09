@@ -27,7 +27,7 @@ epochs=5    # epochs
 lr=0.01     # learning rate
 
 # AT
-dataDir="/p/scratch/raise-ctp1/T31_LD/"
+dataDir="/p/scratch/raise-ctp2/T31_LD/"
 COMMAND="DDP_pytorch_AT.py"
 EXEC="$COMMAND \
   --batch-size $bs \
@@ -54,6 +54,7 @@ sleep 1
 # job info 
 echo "DEBUG: TIME: $(date)"
 echo "DEBUG: EXECUTE: $EXEC"
+echo "DEBUG: SLURM_SUBMIT_DIR: $SLURM_SUBMIT_DIR"
 echo "DEBUG: SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "DEBUG: SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
 echo "DEBUG: SLURM_NNODES: $SLURM_NNODES"
