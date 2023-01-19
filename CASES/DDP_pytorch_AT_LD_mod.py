@@ -392,7 +392,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                         optimizer.zero_grad()
             else:
                 predictions = model(inputs).float()
-                loss = loss_function(predictions, inputs)
+                loss = loss_function(predictions, inputs) / args.accum_iter
                 loss.backward()
                 if do_backprop:
                     optimizer.step()
