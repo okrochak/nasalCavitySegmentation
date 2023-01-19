@@ -7,10 +7,11 @@
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
 #SBATCH --error=job.err
-#SBATCH --time=01:00:00
+#SBATCH --time=0-01:00:00
 
 # configure node and process count on the CM
 #SBATCH --partition=dp-esb
+# SBATCH --partition=dp-dam
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
@@ -44,6 +45,9 @@ ml --force purge
 ml use $OTHERSTAGES
 ml Stages/2022 GCC/11.2.0 OpenMPI/4.1.2 cuDNN/8.3.1.22-CUDA-11.5 NCCL/2.11.4-CUDA-11.5 Python/3.9.6
 
+# recent bug: https://gitlab.jsc.fz-juelich.de/software-team/easybuild/-/wikis/Failed-to-initialize-NVML-Driver-library-version-mismatch-message
+ml -nvidia-driver/.default
+
 # set env - pip
 source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate
 
@@ -51,10 +55,16 @@ source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate
 #source /p/project/prcoe12/RAISE/miniconda3_deepv/etc/profile.d/conda.sh
 #conda activate
 
+# New CUDA drivers on the compute nodes
+ln -s /usr/lib64/libcuda.so.1 .
+ln -s /usr/lib64/libnvidia-ml.so.1 .
+LD_LIBRARY_PATH=.:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
 # sleep a sec
 sleep 1
 
 # job info 
+echo "TIME: $(date)"
 echo "DEBUG: EXECUTE: $EXEC"
 echo "DEBUG: SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "DEBUG: SLURM_JOB_NODELIST: $SLURM_JOB_NODELIST"
@@ -64,13 +74,10 @@ echo "DEBUG: SLURM_TASKS_PER_NODE: $SLURM_TASKS_PER_NODE"
 echo "DEBUG: SLURM_SUBMIT_HOST: $SLURM_SUBMIT_HOST"
 echo "DEBUG: SLURMD_NODENAME: $SLURMD_NODENAME"
 echo "DEBUG: SLURM_NODEID: $SLURM_NODEID"
-echo "DEBUG: SLURM_LOCALID: $SLURM_LOCALID" 
-echo "DEBUG: SLURM_PROCID: $SLURM_PROCID"
 echo "DEBUG: CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 if [ "$debug" = true ] ; then
   export NCCL_DEBUG=INFO
 fi
-echo
 
 # set comm, CUDA and OMP
 #export PSP_CUDA=1 # not needed atm
