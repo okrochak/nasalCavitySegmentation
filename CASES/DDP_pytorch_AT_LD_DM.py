@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import scipy as sp, noise
 from perlin_noise import PerlinNoise
 
-
 # ml libs
 import torch
 import torch.distributed as dist
@@ -51,20 +50,12 @@ def plot_scatter_test(inp_img, org_img, out_img, epoch):
     ax1 = fig.add_subplot(131)
     im1 = ax1.imshow(inp_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
     ax1.set_title('Original')
-
     ax2 = fig.add_subplot(132)
     im2 = ax2.imshow(org_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
     ax2.set_title('Input')
-
     ax3 = fig.add_subplot(133)
     im3 = ax3.imshow(out_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
     ax3.set_title('Output')
-
-    fig.subplots_adjust(right=0.85)
-    cbar_ax = fig.add_axes([0.99, 0.396, 0.03, 0.15])
-    fig.tight_layout(pad=1.0)
-    #fig.colorbar(im1, cax=cbar_ax)
-
     plt.savefig('vfield_recon_DM_train_'+str(epoch)+'.pdf',bbox_inches='tight',pad_inches=0)
 
 # loader for turbulence HDF5 data
@@ -318,7 +309,7 @@ def trace_handler(prof):
 
 # diffusion model for ATB
 class diff_model:
-    def __init__(self,inputs,epoch,noise_map,sigma=1.0,eps=1e-3):
+    def __init__(self,inputs,noise_map,epoch=1,sigma=1.0,eps=1e-2):
         # start a timer
         lt = time.perf_counter()
 
@@ -327,11 +318,10 @@ class diff_model:
 
         # level of diffusion over epochs
         sigma =  2.0 if epoch >  100 else sigma
-        sigma =  5.0 if epoch >  200 else sigma
-        sigma =  7.0 if epoch >  300 else sigma
-        sigma = 10.0 if epoch >  400 else sigma
-        sigma = 15.0 if epoch >  500 else sigma
-        sigma = 20.0 if epoch > 1000 else sigma
+        sigma =  3.0 if epoch >  200 else sigma
+        sigma =  4.0 if epoch >  300 else sigma
+        sigma =  5.0 if epoch >  400 else sigma
+        sigma =  6.0 if epoch >  500 else sigma
         self.sigma = sigma
 
         # generate Perlin noise only if dimensions of input changed (expensive)
@@ -344,7 +334,7 @@ class diff_model:
 
         # apply filter with added noise for diffusion
         self.inputs_dm = torch.clone(inputs)
-        if epoch>10:
+        if sigma>1.01:
             # 2D-Gaussian filter with sigma (size=2*r+1, w/ r=round(sigma,truncate), truncate=1 to get desired r)
             for i in range(m):
                 for j in range(n):
@@ -421,7 +411,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
 
         # diffusion model
         lt_3 = time.perf_counter()
-        res = diff_model(inputs, epoch, noise_map)
+        data = diff_model(inputs, noise_map, epoch)
         lt_2 += time.perf_counter() - lt_3
 
         # train part
@@ -429,7 +419,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
             if args.amp:
                 with torch.cuda.amp.autocast():
                     # forward pass
-                    predictions = model(res.inputs_dm.to(device)).float()
+                    predictions = model(data.inputs_dm.to(device)).float()
                     loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
                     # backward pass
                     loss.backward()
@@ -437,27 +427,29 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                         optimizer.step()
                         optimizer.zero_grad()
             else:
-                predictions = model(res.inputs_dm.to(device)).float()
+                predictions = model(data.inputs_dm.to(device)).float()
                 loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
                 loss.backward()
                 if do_backprop:
                     optimizer.step()
                     optimizer.zero_grad()
+
         loss_acc+= loss.item()
+
         if batch_ndx % args.log_int == 0 and grank==0:
             print(f'Epoch: {epoch} / {100 * (batch_ndx + 1) / len(train_loader):06.2f}% done',\
-                  f'/ loss: {loss_acc:19.16f} / sigma={res.sigma}', end='')
+                  f'/ loss: {loss_acc:19.16f} / sigma={data.sigma}', end='')
             print(f' / bp: {do_backprop}') if not do_backprop else print(f'')
-
-    # TEST w/ plots
-    if grank==0 and epoch%10==0:
-        plot_scatter_test(inputs[0][0].cpu().detach().numpy(), \
-                res.inputs_dm[0][0].cpu().detach().numpy(), \
-                predictions[0][0].cpu().detach().numpy(), epoch)
 
         # profiler step per batch
         if args.benchrun:
             prof.step()
+
+    # TEST w/ plots
+    if grank==0 and epoch%10==0:
+        plot_scatter_test(inputs[0][0].cpu().detach().numpy(), \
+                data.inputs_dm[0][0].cpu().detach().numpy(), \
+                predictions[0][0].cpu().detach().numpy(), epoch)
 
     # lr scheduler
     if args.schedule:
@@ -484,7 +476,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     return loss_acc, time.perf_counter()-lt_1
 
 # test loop
-def test(model, loss_function, device, test_loader):
+def test(model, loss_function, device, test_loader, noise_map):
     et = time.perf_counter()
     model.eval()
     test_loss = 0.0
@@ -492,8 +484,11 @@ def test(model, loss_function, device, test_loader):
     with torch.no_grad():
         for count, (samples) in enumerate(test_loader):
             inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
-            predictions = model(inputs).float()
-            loss = loss_function(predictions, inputs) / args.accum_iter
+
+            # test highly diffused image for diffusion model
+            data = diff_model(inputs.cpu(), noise_map, 1e9, sigma=20)
+            predictions = model(data.inputs_dm.to(device)).float()
+            loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
             test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
             # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
             res = torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs)))
@@ -514,7 +509,7 @@ def test(model, loss_function, device, test_loader):
 
     # plot comparison if needed
     if grank==0 and not args.skipplot and not args.testrun and not args.benchrun:
-        plot_scatter(inputs[0][0].cpu().detach().numpy(),
+        plot_scatter(data.inputs_dm[0][0].cpu().detach().numpy(),
                 predictions[0][0].cpu().detach().numpy(), 'test')
 
 # encode export
@@ -524,11 +519,10 @@ def encode_exp(encode, device, train_loader):
         predictions = encode(inputs).float()
 
         # export the data
-        ini = inputs.to('cpu').detach().numpy()
-        res = predictions.to('cpu').detach().numpy()
+        inp = inputs.to('cpu').detach().numpy()
         h5f = h5py.File('./test_'+str(batch_ndx)+'_'+str(grank)+'.h5', 'w')
-        h5f.create_dataset('ini', data=ini)
-        h5f.create_dataset('res', data=res)
+        h5f.create_dataset('input', data=inputs.cpu().detach().numpy())
+        h5f.create_dataset('prediction', data=predictions.cpu().detach().numpy())
         h5f.close()
         break
 
@@ -791,7 +785,7 @@ def main():
         debug_final(logging, start_epoch, epoch, first_ep_t, last_ep_t, tot_ep_t)
 
 # start testing loop
-    test(distrib_model, loss_function, device, test_loader)
+    test(distrib_model, loss_function, device, test_loader, noise_map)
 
 # export first batch's latent space if needed (Turn to True)
     if args.export_latent:
