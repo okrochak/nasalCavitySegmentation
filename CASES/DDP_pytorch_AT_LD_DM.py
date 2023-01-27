@@ -4,7 +4,7 @@
 script to train custom diffusion model with large actuated TBL dataset.
 instead of noise, dataset is filtered with Gaussian filter and artificial turbulence is added. 
 authors: EI, RS
-version: 230120a
+version: 230127a
 notes: for cost Perlin noise is selected, use spectral methods later on.
 works for non-actuated case at this moment!
 """
@@ -707,11 +707,9 @@ def main():
         logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
 # preprocess noise map (too ugly, fix later)
-    for batch_ndx, (samples) in enumerate(train_loader):
-        inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float()
-        _,_,a,b = inputs.shape[:]
-        noise_map = noise_gen(a,b)
-        break
+    sample = next(iter(train_loader))
+    a,b = sample.inp.view(1, -1, *(sample.inp.size()[2:])).squeeze(0).float().shape[-2:]
+    noise_map = noise_gen(a,b)
 
 # resume state
     start_epoch = 1
