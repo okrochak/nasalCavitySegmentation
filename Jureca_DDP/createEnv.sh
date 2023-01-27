@@ -16,13 +16,16 @@ echo
 cont1=false
 if [ "$sysN" = 'deepv' ] ; then
   ml use $OTHERSTAGES
-  ml Stages/2022 GCC OpenMPI cuDNN NCCL Python CMake
+  ml Stages/2022 NVHPC/22.1 OpenMPI/4.1.2 NCCL/2.15.1-1-CUDA-11.5 cuDNN/8.3.1.22-CUDA-11.5
+  ml Python/3.9.6 HDF5 CMake
+  ml -nvidia-driver/.default
   cont1=true
 elif [ "$sysN" = 'juwels' ] ; then
   ml GCC ParaStationMPI Python CMake
   cont1=true
 elif [ "$sysN" = 'jureca' ] ; then
-  ml Stages/2022 NVHPC ParaStationMPI/5.5.0-1-mt Python CMake NCCL/2.11.4-CUDA-11.5 cuDNN libaio HDF5 PnetCDF mpi-settings/CUDA
+  ml Stages/2022 NVHPC/22.1 ParaStationMPI/5.5.0-1-mt NCCL/2.11.4-CUDA-11.5 cuDNN/8.3.1.22-CUDA-11.5
+  ml Python/3.9.6 CMake HDF5 PnetCDF libaio/0.3.112 mpi-settings/CUDA
   cont1=true
 else
   echo
