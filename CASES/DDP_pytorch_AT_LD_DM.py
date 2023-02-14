@@ -761,7 +761,7 @@ def main():
     if grank==0:
         logging.info('current learning rate: '+str(args.lr*lr_scale)+'\n')
         tp_d = sum(p.numel() for p in distrib_model.parameters())
-        logging.info('total distributed parameters: '+str(tp_d),'\n')
+        logging.info('total distributed parameters: '+str(tp_d)+'\n')
         tpt_d = sum(p.numel() for p in distrib_model.parameters() if p.requires_grad)
         logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
