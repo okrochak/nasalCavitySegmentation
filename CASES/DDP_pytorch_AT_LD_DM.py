@@ -2,61 +2,117 @@
 # -*- coding: utf-8 -*-
 """
 script to train custom diffusion model with large actuated TBL dataset.
-instead of noise, dataset is filtered with Gaussian filter and artificial turbulence is added. 
+instead of noise, dataset is filtered with Gaussian filter and artificial turbulence is added.
 authors: EI, RS
-version: 230127a
+version: 230214a
 notes: for cost Perlin noise is selected, use spectral methods later on.
 works for non-actuated case at this moment!
 """
 
 # std libs
-import argparse, sys, platform, os, time, numpy as np, h5py, random, shutil, logging
-import matplotlib.pyplot as plt
-import scipy as sp, noise
+import argparse, sys, platform, os, time, h5py, random, shutil, logging
+import matplotlib.pyplot as plt, numpy as np, scipy as sp
 from perlin_noise import PerlinNoise
 
 # ml libs
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torch.optim as optim
-from torch.nn.functional import interpolate, pad
 from torchvision import datasets, transforms
 
-# plot reconstruction
-def plot_scatter(inp_img, out_img, data_org):
-    fig = plt.figure(figsize = (4,8))
-    plt.rcParams.update({'font.size': 10})
-    ax1 = fig.add_subplot(121)
-    im1 = ax1.imshow(inp_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
-    ax1.set_title('Input')
-    #divider = make_axes_locatable(ax1)
-    #cax = divider.append_axes('right', size='5%', pad=0.05)
-    #fig.colorbar(im1, cax=cax, orientation='vertical')
-    ax2 = fig.add_subplot(122)
-    im2 = ax2.imshow(out_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
-    ax2.set_title('Output')
-    fig.subplots_adjust(right=0.85)
-    cbar_ax = fig.add_axes([0.99, 0.396, 0.03, 0.225])
-    fig.tight_layout(pad=1.0)
-    fig.colorbar(im1, cax=cbar_ax)
-    plt.savefig('vfield_recon_VAE'+data_org+str(random.randint(0,100))+'.pdf',
-                    bbox_inches = 'tight', pad_inches = 0)
+# parsed settings
+def pars_ini():
+    global args
+    parser = argparse.ArgumentParser(description='PyTorch-DDP actuated TBL')
 
-# TEST
-def plot_scatter_test(inp_img, org_img, out_img, epoch):
+    # IO parsers
+    parser.add_argument('--data-dir', default='./',
+                        help='location of the training dataset in the'
+                        ' local filesystem (default: ./)')
+    parser.add_argument('--restart-int', type=int, default=100,
+                        help='restart interval per epoch (default: 100)')
+    parser.add_argument('--concM', type=int, default=1,
+                        help='increase dataset size with this factor (default: 1)')
+
+    # model parsers
+    parser.add_argument('--batch-size', type=int, default=1, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='input batch size for training (default: 1, min: 1, max: 1e9)')
+    parser.add_argument('--epochs', type=int, default=10, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='number of epochs to train (default: 10, min: 1, max: 1e9)')
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='learning rate (default: 0.001)')
+    parser.add_argument('--wdecay', type=float, default=0.003,
+                        help='weight decay in Adam optimizer (default: 0.003)')
+    parser.add_argument('--gamma', type=float, default=0.95,
+                        help='gamma in schedular (default: 0.95)')
+    parser.add_argument('--shuff', action='store_true', default=False,
+                        help='shuffle dataset (default: False)')
+    parser.add_argument('--schedule', action='store_true', default=False,
+                        help='enable scheduler in the training (default: False)')
+
+    # debug parsers
+    parser.add_argument('--testrun', action='store_true', default=False,
+                        help='do a test run with seed (default: False)')
+    parser.add_argument('--skipplot', action='store_true', default=False,
+                        help='skips test postprocessing (default: False)')
+    parser.add_argument('--nseed', type=int, default=0,
+                        help='seed integer for reproducibility (default: 0)')
+    parser.add_argument('--log-int', type=int, default=10,
+                        help='log interval per training (default: 10)')
+
+    # parallel parsers
+    parser.add_argument('--backend', type=str, default='nccl',
+                        help='backend for parrallelisation (default: nccl)')
+    parser.add_argument('--nworker', type=int, default=0,
+                        help='number of workers in DataLoader (default: 0 - only main)')
+    parser.add_argument('--prefetch', type=int, default=2,
+                        help='prefetch data in DataLoader (default: 2)')
+    parser.add_argument('--no-cuda', action='store_true', default=False,
+                        help='disables GPGPUs (default: False)')
+    parser.add_argument('--benchrun', action='store_true', default=False,
+                        help='do a bench run w/o IO (default: False)')
+
+    # optimizations
+    parser.add_argument('--cudnn', action='store_true', default=False,
+                        help='turn on cuDNN optimizations (default: False)')
+    parser.add_argument('--amp', action='store_true', default=False,
+                        help='turn on Automatic Mixed Precision (default: False)')
+    parser.add_argument('--reduce-prec', action='store_true', default=False,
+                        help='reduce precision of the dataset for faster I/O (default: False)')
+    parser.add_argument('--scale-lr', action='store_true', default=False,
+                        help='scale lr with #workers (default: False)')
+    parser.add_argument('--accum-iter', type=int, default=1,
+                        help='accumulate gradient update (default: 1 - turns off)')
+
+    args = parser.parse_args()
+
+    # set minimum of 3 epochs when benchmarking (last epoch produces logs)
+    args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
+
+# postproc
+def plot_scatter(org_img, inp_img, out_img, epoch, final=False):
     fig = plt.figure(figsize = (4,12))
     plt.rc('font', size=10)
     ax1 = fig.add_subplot(131)
-    im1 = ax1.imshow(inp_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
+    im1 = ax1.imshow(org_img,interpolation='None')
     ax1.set_title('Original')
     ax2 = fig.add_subplot(132)
-    im2 = ax2.imshow(org_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
+    im2 = ax2.imshow(inp_img, interpolation='None')
     ax2.set_title('Input')
     ax3 = fig.add_subplot(133)
-    im3 = ax3.imshow(out_img, vmin = np.min(inp_img), vmax = np.max(inp_img), interpolation='None')
+    im3 = ax3.imshow(out_img, interpolation='None')
     ax3.set_title('Output')
-    plt.savefig('vfield_recon_DM_train_'+str(epoch)+'.pdf',bbox_inches='tight',pad_inches=0)
+
+    outName = 'vfield_recon_DM_train_'+str(epoch)
+    plt.savefig(outName+'.pdf',bbox_inches='tight',pad_inches=0)
+
+    # export the data at final
+    if final:
+        h5f = h5py.File(outName+'.hdf5', 'w')
+        h5f.create_dataset('orig', data=org_img)
+        h5f.create_dataset('input', data=inp_img)
+        h5f.create_dataset('output', data=out_img)
+        h5f.close()
 
 # loader for turbulence HDF5 data
 class custom_batch:
@@ -95,8 +151,14 @@ def hdf5_loader(path):
     data_v = np.array(f1[list(f1.keys())[0]]['v'])
     data_w = np.array(f1[list(f1.keys())[0]]['w'])
 
+    # TEST - sqrt(u) to amplify small structures
+    # sub. min(u) to ensure negative sqrt does not happen
+    #data_u = np.sqrt(data_u-np.min(data_u))
+    #data_v = np.sqrt(data_u-np.min(data_v))
+    #data_w = np.sqrt(data_u-np.min(data_w))
+
     # convert to torch and remove last ten layers assuming free stream
-    dtype = torch.float16 if args.amp else torch.float32
+    dtype = torch.float16 if args.reduce_prec else torch.float32
     data_u = torch.tensor(data_u,dtype=dtype).permute((1,0,2))[:-9,:,:]
     data_v = torch.tensor(data_v,dtype=dtype).permute((1,0,2))[:-9,:,:]
     data_w = torch.tensor(data_w,dtype=dtype).permute((1,0,2))[:-9,:,:]
@@ -108,75 +170,6 @@ def hdf5_loader(path):
 
     return uniform_data(torch.cat((data_u, data_v, data_w)).view(( \
             3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3)))
-
-# parsed settings
-def pars_ini():
-    global args
-    parser = argparse.ArgumentParser(description='PyTorch-DDP actuated TBL')
-
-    # IO parsers
-    parser.add_argument('--data-dir', default='./',
-                        help='location of the training dataset in the'
-                        ' local filesystem (default: ./)')
-    parser.add_argument('--restart-int', type=int, default=10,
-                        help='restart interval per epoch (default: 10)')
-    parser.add_argument('--concM', type=int, default=1,
-                        help='increase dataset size with this factor (default: 1)')
-
-    # model parsers
-    parser.add_argument('--batch-size', type=int, default=1, choices=range(1,int(1e7)), metavar="[1-1e9]",
-                        help='input batch size for training (default: 1, min: 1, max: 1e9)')
-    parser.add_argument('--epochs', type=int, default=10, choices=range(1,int(1e7)), metavar="[1-1e9]",
-                        help='number of epochs to train (default: 10, min: 1, max: 1e9)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate (default: 0.001)')
-    parser.add_argument('--wdecay', type=float, default=0.003,
-                        help='weight decay in Adam optimizer (default: 0.003)')
-    parser.add_argument('--gamma', type=float, default=0.95,
-                        help='gamma in schedular (default: 0.95)')
-    parser.add_argument('--shuff', action='store_true', default=False,
-                        help='shuffle dataset (default: False)')
-    parser.add_argument('--schedule', action='store_true', default=False,
-                        help='enable scheduler in the training (default: False)')
-
-    # debug parsers
-    parser.add_argument('--testrun', action='store_true', default=False,
-                        help='do a test run with seed (default: False)')
-    parser.add_argument('--skipplot', action='store_true', default=False,
-                        help='skips test postprocessing (default: False)')
-    parser.add_argument('--export-latent', action='store_true', default=False,
-                        help='export the latent space on testing for debug (default: False)')
-    parser.add_argument('--nseed', type=int, default=0,
-                        help='seed integer for reproducibility (default: 0)')
-    parser.add_argument('--log-int', type=int, default=10,
-                        help='log interval per training (default: 10)')
-
-    # parallel parsers
-    parser.add_argument('--backend', type=str, default='nccl',
-                        help='backend for parrallelisation (default: nccl)')
-    parser.add_argument('--nworker', type=int, default=0,
-                        help='number of workers in DataLoader (default: 0 - only main)')
-    parser.add_argument('--prefetch', type=int, default=2,
-                        help='prefetch data in DataLoader (default: 2)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables GPGPUs (default: False)')
-    parser.add_argument('--benchrun', action='store_true', default=False,
-                        help='do a bench run w/o IO (default: False)')
-
-    # optimizations
-    parser.add_argument('--cudnn', action='store_true', default=False,
-                        help='turn on cuDNN optimizations (default: False)')
-    parser.add_argument('--amp', action='store_true', default=False,
-                        help='turn on Automatic Mixed Precision (default: False)')
-    parser.add_argument('--scale-lr', action='store_true', default=False,
-                        help='scale lr with #workers (default: False)')
-    parser.add_argument('--accum-iter', type=int, default=1,
-                        help='accumulate gradient update (default: 1 - turns off)')
-
-    args = parser.parse_args()
-
-    # set minimum of 3 epochs when benchmarking (last epoch produces logs)
-    args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
 
 # debug of the run
 def debug_ini(timer):
@@ -224,54 +217,111 @@ def debug_final(logging,start_epoch,last_epoch,first_ep_t,last_ep_t,tot_ep_t):
             logging.info('memory summary:\n'+str(torch.cuda.memory_summary(0)))
 
 # network
-class autoencoder(nn.Module):
-    def __init__(self):
+"""
+U-NET from
+https://github.com/milesial/Pytorch-UNet/blob/master/unet/
+"""
+class UNet(nn.Module):
+    def __init__(self, n_channels=3, n_classes=3, bilinear=True):
+        super(UNet, self).__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.bilinear = bilinear
+
+        self.inc = (DoubleConv(n_channels, 64))
+        self.down1 = (Down(64, 128))
+        self.down2 = (Down(128, 256))
+        self.down3 = (Down(256, 512))
+        factor = 2 if bilinear else 1
+        self.down4 = (Down(512, 1024 // factor))
+        self.up1 = (Up(1024, 512 // factor, bilinear))
+        self.up2 = (Up(512, 256 // factor, bilinear))
+        self.up3 = (Up(256, 128 // factor, bilinear))
+        self.up4 = (Up(128, 64, bilinear))
+        self.outc = (OutConv(64, n_classes))
+
+    def forward(self, x):
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        logits = self.outc(x)
+        return logits
+
+class DoubleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 2"""
+
+    def __init__(self, in_channels, out_channels, mid_channels=None):
         super().__init__()
 
-        self.leaky_reLU = nn.LeakyReLU(0.2)
-        self.relu = nn.ReLU()
+        if not mid_channels:
+            mid_channels = out_channels
 
-        # Encoder
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(32)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(64)
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
 
-        #Decoder
-        self.conv6 = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn6 = nn.BatchNorm2d(32)
-        self.conv7 = nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn7 = nn.BatchNorm2d(16)
-        self.conv8 = nn.Conv2d(16, 3, kernel_size=3, stride=1, padding=1, bias=False)
+    def forward(self, x):
+        return self.double_conv(x)
 
-    def forward(self, inp_x):
-        """
-        encoder - Convolutional layer is followed by a reLU activation which is then batch normalised
-        """
-        conv1 = self.leaky_reLU(self.bn1(self.conv1(inp_x)))
-        conv2 = self.leaky_reLU(self.bn2(self.conv2(conv1)))
-        conv3 = self.leaky_reLU(self.bn3(self.conv3(conv2)))
+class Down(nn.Module):
+    """Downscaling with maxpool then double conv"""
 
-        """
-        Decoder:
-        Map the given latent code to the image space.
-        decoder - reLU activation is applied first followed by a batch normalisation
-        """
-        conv6 = self.leaky_reLU(self.bn6(self.conv6(conv3)))
-        conv7 = self.leaky_reLU(self.bn7(self.conv7(conv6)))
-        return self.conv8(conv7)
-
-# compression part - export latent space
-class encoder(autoencoder):
-    def __init__(self):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-    def forward(self, inp_x):
-        # part of network to be exported
-        conv1 = self.leaky_reLU(self.bn1(self.conv1(inp_x)))
-        conv2 = self.leaky_reLU(self.bn2(self.conv2(conv1)))
-        return self.leaky_reLU(self.bn3(self.conv3(conv2)))
+        self.maxpool_conv = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)
+
+class Up(nn.Module):
+    """Upscaling then double conv"""
+
+    def __init__(self, in_channels, out_channels, bilinear=True):
+        super().__init__()
+
+        # if bilinear, use the normal convolutions to reduce the number of channels
+        if bilinear:
+            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
+        else:
+            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            self.conv = DoubleConv(in_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        # input is CHW
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+
+        x1 = nn.functional.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        # if you have padding issues, see
+        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
+        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
+        x = torch.cat([x2, x1], dim=1)
+        return self.conv(x)
+
+class OutConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(OutConv, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv(x)
 
 # save state of the training
 def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
@@ -292,6 +342,7 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
         # write on worker with is_best
         if grank == is_best_rank:
             torch.save(state,'./'+res_name)
+            #shutil.copyfile(res_name, res_name+'_'+str(epoch))
             logging.info('state in '+str(grank)+' is saved on epoch:'+str(epoch)+\
                     ' in '+str(time.perf_counter()-rt)+' s')
 
@@ -313,15 +364,14 @@ class diff_model:
         # start a timer
         lt = time.perf_counter()
 
-        # 89,3,250,192
+        # stacks,u_i,n_x,n_y 
         m,n,a,b = inputs.shape[:]
 
         # level of diffusion over epochs
-        sigma =  2.0 if epoch >  100 else sigma
-        sigma =  3.0 if epoch >  200 else sigma
-        sigma =  4.0 if epoch >  300 else sigma
-        sigma =  5.0 if epoch >  400 else sigma
-        sigma =  6.0 if epoch >  500 else sigma
+        sigma = 2.0 if epoch >  4000 else sigma
+        sigma = 3.0 if epoch >  8000 else sigma
+        sigma = 4.0 if epoch > 12000 else sigma
+        sigma = 5.0 if epoch > 16000 else sigma
         self.sigma = sigma
 
         # generate Perlin noise only if dimensions of input changed (expensive)
@@ -414,6 +464,9 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
         data = diff_model(inputs, noise_map, epoch)
         lt_2 += time.perf_counter() - lt_3
 
+        # adjust LR with sigma just testing!
+        adjust_learning_rate(optimizer, epoch, data.sigma)
+
         # train part
         with torch.set_grad_enabled(True):
             if args.amp:
@@ -446,8 +499,8 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
             prof.step()
 
     # TEST w/ plots
-    if grank==0 and epoch%10==0:
-        plot_scatter_test(inputs[0][0].cpu().detach().numpy(), \
+    if grank==0 and epoch%100==0:
+        plot_scatter(inputs[0][0].cpu().detach().numpy(), \
                 data.inputs_dm[0][0].cpu().detach().numpy(), \
                 predictions[0][0].cpu().detach().numpy(), epoch)
 
@@ -484,9 +537,9 @@ def test(model, loss_function, device, test_loader, noise_map):
     with torch.no_grad():
         for count, (samples) in enumerate(test_loader):
             inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
-
+ 
             # test highly diffused image for diffusion model
-            data = diff_model(inputs.cpu(), noise_map, 1e9, sigma=20)
+            data = diff_model(inputs.cpu(), noise_map, epoch=1e9, sigma=5)
             predictions = model(data.inputs_dm.to(device)).float()
             loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
             test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
@@ -509,8 +562,9 @@ def test(model, loss_function, device, test_loader, noise_map):
 
     # plot comparison if needed
     if grank==0 and not args.skipplot and not args.testrun and not args.benchrun:
-        plot_scatter(data.inputs_dm[0][0].cpu().detach().numpy(),
-                predictions[0][0].cpu().detach().numpy(), 'test')
+        plot_scatter(inputs[0][0].cpu().detach().numpy(), \
+                data.inputs_dm[0][0].cpu().detach().numpy(), \
+                predictions[0][0].cpu().detach().numpy(), epoch=args.epochs, final=True)
 
 # encode export
 def encode_exp(encode, device, train_loader):
@@ -525,6 +579,10 @@ def encode_exp(encode, device, train_loader):
         h5f.create_dataset('prediction', data=predictions.cpu().detach().numpy())
         h5f.close()
         break
+
+def adjust_learning_rate(optimizer, sigma, factor):
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = args.lr*factor
 
 # PARALLEL HELPERS
 # sum of field over GPGPUs
@@ -678,7 +736,7 @@ def main():
         logging.info('read data: '+str(time.perf_counter()-st)+'s\n')
 
     # create model
-    model = autoencoder().to(device)
+    model = UNet().to(device)
 
 # distribute model to workers
     if args.cuda:
@@ -692,17 +750,18 @@ def main():
 
 # optimizer
     loss_function = nn.MSELoss()
-    optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
-    scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
-    # alt.
-    #optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
-    #scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10, eta_min=0.001)
+    #optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
+    optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale)
+
+# scheduler
+    #scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
+    scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4000)
 
     # used lr and info on num. of parameters
     if grank==0:
         logging.info('current learning rate: '+str(args.lr*lr_scale)+'\n')
-        #tp_d = sum(p.numel() for p in distrib_model.parameters())
-        #logging.info('total distributed parameters: '+str(tp_d))
+        tp_d = sum(p.numel() for p in distrib_model.parameters())
+        logging.info('total distributed parameters: '+str(tp_d),'\n')
         tpt_d = sum(p.numel() for p in distrib_model.parameters() if p.requires_grad)
         logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
@@ -735,43 +794,40 @@ def main():
         logging.warning('given epochs are less than the one in the restart file!')
         logging.warning('only testing will be performed -- skipping training!')
 
-# printout loss and epoch
-    if grank==0 and not only_test:
-        outT = open('out_loss.dat','w')
-
 # start trainin loop
     et = time.perf_counter()
-    tot_ep_t = 0.0
-    for epoch in range(start_epoch, args.epochs+1):
-        # training
-        loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
-            device, train_loader, optimizer, epoch, scheduler_lr, noise_map)
+    first_ep_t = last_ep_t = tot_ep_t = 0.0
+    with open('out_loss.dat','a',encoding="utf-8") as outT:
+        for epoch in range(start_epoch, args.epochs+1):
+            # training
+            loss_acc, train_t = train(distrib_model, train_sampler, loss_function, \
+                device, train_loader, optimizer, epoch, scheduler_lr, noise_map)
 
-        # save total/first/last epoch timer
-        tot_ep_t += train_t
-        if epoch == start_epoch:
-            first_ep_t = train_t
-        if epoch == args.epochs:
-            last_ep_t = train_t
+            # save total/first/last epoch timer
+            tot_ep_t += train_t
+            if epoch == start_epoch:
+                first_ep_t = train_t
+            if epoch == args.epochs:
+                last_ep_t = train_t
 
-       # save state if found a better state
-        is_best = loss_acc < best_acc
-        if epoch % args.restart_int == 0 and not args.benchrun:
-            save_state(epoch, distrib_model, loss_acc, optimizer, res_name, is_best)
-            # reset best_acc
-            best_acc = min(loss_acc, best_acc)
+            # save state if found a better state
+            is_best = loss_acc < best_acc
+            if epoch % args.restart_int == 0 and not args.benchrun:
+                save_state(epoch, distrib_model, loss_acc, optimizer, res_name, is_best)
+                # reset best_acc
+                best_acc = min(loss_acc, best_acc)
 
-        # write out loss and epoch
-        if grank==0:
-            outT.write("%4d   %5.15E\n" %(epoch, loss_acc))
+                # SAVE REGARDLESS A COPY with a different name for rewind
+                save_state(epoch, distrib_model, loss_acc, optimizer, res_name+'_'+str(epoch), True)
 
-        # empty cuda cache
-        if args.cuda:
-            torch.cuda.empty_cache()
+            # write out loss and epoch
+            if grank==0:
+                outT.write("%4d   %5.15E\n" %(epoch, loss_acc))
+                outT.flush()
 
-    # close file
-    if grank==0 and not only_test:
-        outT.close()
+            # empty cuda cache
+            if args.cuda:
+                torch.cuda.empty_cache()
 
 # finalise training
     # save final state
@@ -784,17 +840,6 @@ def main():
 
 # start testing loop
     test(distrib_model, loss_function, device, test_loader, noise_map)
-
-# export first batch's latent space if needed (Turn to True)
-    if args.export_latent:
-        encode = encoder().to(device)
-        # distribute model to workers
-        if args.cuda:
-            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode,\
-                device_ids=[device], output_device=device)
-        else:
-            distrib_encode = torch.nn.parallel.DistributedDataParallel(encode)
-        encode_exp(distrib_encode, device, train_loader)
 
 # clean-up
     if grank==0:
