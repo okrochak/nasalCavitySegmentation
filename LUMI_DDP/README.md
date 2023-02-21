@@ -6,6 +6,9 @@ https://github.com/pytorch/pytorch#from-source
 # LUMI user documentation
 https://docs.lumi-supercomputer.eu/software/packages/pytorch/
 
+# CSC support
+https://docs.csc.fi/apps/pytorch/
+
 # current isues
 1. SQL DB file lock?
 2. no apptainer (singularity is too old)
