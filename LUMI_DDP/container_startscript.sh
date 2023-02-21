@@ -23,7 +23,7 @@
 
 # AT
 dataDir='/scratch/${SBATCH_ACCOUNT}/RAISE_datasets/actuated_tbl/'
-COMMAND="DDP_pytorch_AT.py"
+COMMAND="DDP_pytorch_AT_LD_mod.py"
 EXEC="$COMMAND --epochs 1 --batch-size 1 --concM 1 --benchrun \
        --nworker $SLURM_CPUS_PER_TASK --data-dir $dataDir"
 
@@ -49,6 +49,7 @@ fi
 export NCCL_SOCKET_IFNAME=hsn
 export NCCL_NET_GDR_LEVEL=3
 #-miopen
+mkdir -p /tmp/${USER}-miopen-cache-${SLURM_JOB_ID}
 export MIOPEN_USER_DB_PATH=/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}
 export MIOPEN_CUSTOM_CACHE_DIR=${MIOPEN_USER_DB_PATH}
 #-rocm
