@@ -28,5 +28,5 @@ export SCRATCH="/scratch/project_465000280"
 singularity pull torch_rocm.sif docker://rocm/pytorch:rocm5.4.1_ubuntu20.04_py3.7_pytorch_1.12.1
 
 # run bash to create envs
-echo "running ./createDockerEnv.sh"
-singularity exec -B $SCRATCH:$SCRATCH torch_rocm.sif bash -c "./createDockerEnv.sh"
+echo "running ./container_env.sh"
+singularity exec -B $SCRATCH:$SCRATCH torch_rocm.sif bash -c "./container_env.sh"
