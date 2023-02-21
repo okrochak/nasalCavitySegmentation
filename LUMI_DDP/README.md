@@ -4,11 +4,13 @@
 https://github.com/pytorch/pytorch#from-source
 
 # LUMI user documentation
-https://docs.lumi-supercomputer.eu/firststeps/getstarted/
+https://docs.lumi-supercomputer.eu/software/packages/pytorch/
 
 # current isues
 1. SQL DB file lock?
-2. no apptainer (singularity is too old)  
+2. no apptainer (singularity is too old)
+3. all_reduce is not working on LUMI example in \
+https://github.com/Lumi-supercomputer/lumi-reframe-tests/tree/main/checks/apps/deeplearning/pytorch/src
 
 # to-do
 1. further tests
