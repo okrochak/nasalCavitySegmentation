@@ -4,7 +4,7 @@
 script to train custom diffusion model with large actuated TBL dataset.
 instead of noise, dataset is filtered with Gaussian filter and artificial turbulence is added.
 authors: EI, RS
-version: 230214a
+version: 230224a
 notes: for cost Perlin noise is selected, use spectral methods later on.
 works for non-actuated case at this moment!
 """
@@ -69,6 +69,12 @@ def pars_ini():
                         help='prefetch data in DataLoader (default: 2)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables GPGPUs (default: False)')
+
+    # benchmarking parsers
+    parser.add_argument('--synt', action='store_true', default=False,
+                        help='use a synthetic dataset instead (default: False)')
+    parser.add_argument('--synt-dpw', type=int, default=1000, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='dataset size per GPU if synt is true (default: 1000, min: 1, max: 1e9)')
     parser.add_argument('--benchrun', action='store_true', default=False,
                         help='do a bench run w/o IO (default: False)')
 
@@ -90,7 +96,7 @@ def pars_ini():
     args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
 
 # postproc
-def plot_scatter(org_img, inp_img, out_img, epoch, final=False):
+def plot_scatter(org_img, inp_img, out_img, epoch, sigma, final=False):
     fig = plt.figure(figsize = (4,12))
     plt.rc('font', size=10)
     ax1 = fig.add_subplot(131)
@@ -103,7 +109,7 @@ def plot_scatter(org_img, inp_img, out_img, epoch, final=False):
     im3 = ax3.imshow(out_img, interpolation='None')
     ax3.set_title('Output')
 
-    outName = 'vfield_recon_DM_train_'+str(epoch)
+    outName = 'vfield_recon_DM_train_'+str(epoch)+'_'+str(sigma)
     plt.savefig(outName+'.pdf',bbox_inches='tight',pad_inches=0)
 
     # export the data at final
@@ -151,12 +157,6 @@ def hdf5_loader(path):
     data_v = np.array(f1[list(f1.keys())[0]]['v'])
     data_w = np.array(f1[list(f1.keys())[0]]['w'])
 
-    # TEST - sqrt(u) to amplify small structures
-    # sub. min(u) to ensure negative sqrt does not happen
-    #data_u = np.sqrt(data_u-np.min(data_u))
-    #data_v = np.sqrt(data_u-np.min(data_v))
-    #data_w = np.sqrt(data_u-np.min(data_w))
-
     # convert to torch and remove last ten layers assuming free stream
     dtype = torch.float16 if args.reduce_prec else torch.float32
     data_u = torch.tensor(data_u,dtype=dtype).permute((1,0,2))[:-9,:,:]
@@ -170,6 +170,20 @@ def hdf5_loader(path):
 
     return uniform_data(torch.cat((data_u, data_v, data_w)).view(( \
             3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3)))
+
+# synthetic data for benchmarking
+class SyntheticDataset_train(torch.utils.data.Dataset):
+    def __getitem__(self, idx):
+        data = torch.randn(89, 3, 192, 248)
+        target = random.randint(0, 999)
+        return (data, target)
+
+    def __len__(self):
+        return args.batch_size * gwsize * args.synt_dpw
+
+class SyntheticDataset_test(SyntheticDataset_train):
+    def __len__(self):
+        return args.batch_size * gwsize
 
 # debug of the run
 def debug_ini(timer):
@@ -360,18 +374,20 @@ def trace_handler(prof):
 
 # diffusion model for ATB
 class diff_model:
-    def __init__(self,inputs,noise_map,epoch=1,sigma=1.0,eps=1e-2):
+    def __init__(self,inputs,noise_map,epoch=1,sigma=None,eps=1e-2):
         # start a timer
         lt = time.perf_counter()
 
-        # stacks,u_i,n_x,n_y 
+        # stacks,u_i,n_x,n_y
         m,n,a,b = inputs.shape[:]
 
-        # level of diffusion over epochs
-        sigma = 2.0 if epoch >  4000 else sigma
-        sigma = 3.0 if epoch >  8000 else sigma
-        sigma = 4.0 if epoch > 12000 else sigma
-        sigma = 5.0 if epoch > 16000 else sigma
+        # level of diffusion over epochs (modify if sigma is not given in arg)
+        if sigma is None:
+            sigma = 1.0 if epoch >     0 else sigma
+            sigma = 2.0 if epoch >  4000 else sigma
+            sigma = 3.0 if epoch >  8000 else sigma
+            sigma = 4.0 if epoch > 12000 else sigma
+            sigma = 5.0 if epoch > 16000 else sigma
         self.sigma = sigma
 
         # generate Perlin noise only if dimensions of input changed (expensive)
@@ -440,7 +456,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
             ],
             # at least 3 epochs required with
             # default wait=1, warmup=1, active=args.epochs, repeat=1, skip_first=0
-            schedule=torch.profiler.schedule(wait=1,warmup=1,active=args.epochs,repeat=1,skip_first=0),
+            schedule=torch.profiler.schedule(wait=1,warmup=1,active=1,repeat=1,skip_first=0),
             #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
             on_trace_ready=trace_handler,
             record_shapes=False,
@@ -502,7 +518,7 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     if grank==0 and epoch%100==0:
         plot_scatter(inputs[0][0].cpu().detach().numpy(), \
                 data.inputs_dm[0][0].cpu().detach().numpy(), \
-                predictions[0][0].cpu().detach().numpy(), epoch)
+                predictions[0][0].cpu().detach().numpy(), epoch, data.sigma)
 
     # lr scheduler
     if args.schedule:
@@ -531,40 +547,44 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
 # test loop
 def test(model, loss_function, device, test_loader, noise_map):
     et = time.perf_counter()
-    model.eval()
-    test_loss = 0.0
-    mean_sqr_diff = 0.0
-    with torch.no_grad():
-        for count, (samples) in enumerate(test_loader):
-            inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
- 
-            # test highly diffused image for diffusion model
-            data = diff_model(inputs.cpu(), noise_map, epoch=1e9, sigma=5)
-            predictions = model(data.inputs_dm.to(device)).float()
-            loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
-            test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
-            # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
-            res = torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs)))
-            res[torch.isinf(res)] = 0.0
-            mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + res.item()/(count+1.0)
 
-    # timer
+    # testing various sigmas
+    for sigma_test in [1,2,3,4,5,10,20]:
+
+        model.eval()
+        test_loss = 0.0
+        mean_sqr_diff = 0.0
+        with torch.no_grad():
+            for count, (samples) in enumerate(test_loader):
+                inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+
+                # test highly diffused image for diffusion model
+                data = diff_model(inputs.cpu(), noise_map, sigma=sigma_test)
+                predictions = model(data.inputs_dm.to(device)).float()
+                loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
+                test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
+                # mean squared prediction difference (Jin et al., PoF 30, 2018, Eq. 7)
+                res = torch.mean(torch.square(torch.nan_to_num(predictions)-torch.nan_to_num(inputs)))
+                res[torch.isinf(res)] = 0.0
+                mean_sqr_diff = mean_sqr_diff*count/(count+1.0) + res.item()/(count+1.0)
+
+        # mean from gpus
+        avg_test_loss = float(par_mean(test_loss).cpu())
+        avg_mean_sqr_diff = float(par_mean(mean_sqr_diff).cpu())
+        if grank==0:
+            print(f'testing results for sigma {sigma_test}:')
+            print(f'avg_test_loss: {avg_test_loss}')
+            print(f'avg_mean_sqr_diff: {avg_mean_sqr_diff} m**2/s**2\n')
+
+        # post-process
+        if grank==0 and not args.skipplot and not args.testrun and not args.benchrun:
+            plot_scatter(inputs[0][0].cpu().detach().numpy(), \
+                    data.inputs_dm[0][0].cpu().detach().numpy(), \
+                    predictions[0][0].cpu().detach().numpy(), \
+                    epoch=args.epochs, sigma=sigma_test, final=True)
+
     if grank==0:
-        logging.info('testing results:')
         logging.info('total testing time: {:.2f}'.format(time.perf_counter()-et)+' s')
-
-    # mean from gpus
-    avg_test_loss = float(par_mean(test_loss).cpu())
-    avg_mean_sqr_diff = float(par_mean(mean_sqr_diff).cpu())
-    if grank==0:
-        logging.info('avg_test_loss: '+str(avg_test_loss))
-        logging.info('avg_mean_sqr_diff: '+str(avg_mean_sqr_diff)+' m**2/s**2\n')
-
-    # plot comparison if needed
-    if grank==0 and not args.skipplot and not args.testrun and not args.benchrun:
-        plot_scatter(inputs[0][0].cpu().detach().numpy(), \
-                data.inputs_dm[0][0].cpu().detach().numpy(), \
-                predictions[0][0].cpu().detach().numpy(), epoch=args.epochs, final=True)
 
 # encode export
 def encode_exp(encode, device, train_loader):
@@ -696,10 +716,15 @@ def main():
     torch.backends.cudnn.benchmark = args.cudnn
 
 # load datasets
-    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
-        loader=hdf5_loader, extensions='.hdf5')
-    test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
-         loader=hdf5_loader, extensions='.hdf5')
+    if args.synt:
+        # synthetic dataset if selected
+        turb_data = SyntheticDataset_train()
+        test_data = SyntheticDataset_test()
+    else:
+        turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
+            loader=hdf5_loader, extensions='.hdf5')
+        test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
+             loader=hdf5_loader, extensions='.hdf5')
 
 # increase dataset size if required
     largeData = []
@@ -839,7 +864,8 @@ def main():
         debug_final(logging, start_epoch, epoch, first_ep_t, last_ep_t, tot_ep_t)
 
 # start testing loop
-    test(distrib_model, loss_function, device, test_loader, noise_map)
+    if not args.synt:
+        test(distrib_model, loss_function, device, test_loader, noise_map)
 
 # clean-up
     if grank==0:
