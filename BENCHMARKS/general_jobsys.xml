@@ -5,25 +5,25 @@
 <jube>
   <benchmark name="bench" outpath="bench_run">
     <comment>General benchmark script</comment>
-   
+
     <!-- bench configuration -->
     <parameterset name="paramset">
       <!-- iterated nodes -->
-      <parameter name="iterNO" type="int">1</parameter>
+      <parameter name="iterNO" type="int">1,2,4,8,16,24</parameter>
       <!-- iterated batch_sizes -->
-      <parameter name="iterBS" type="int">3</parameter>
+      <parameter name="iterBS" type="int">1</parameter>
       <!-- iterated epochs -->
-      <parameter name="iterEP" type="int">1</parameter>
+      <parameter name="iterEP" type="int">10</parameter>
       <!-- iterated learning rates -->
-      <parameter name="iterLR" type="float">0.01</parameter>
+      <parameter name="iterLR" type="float">0.0001</parameter>
       <!-- iterated #workers -->
       <parameter name="iterNW" type="int">32</parameter>
       <!-- iterated prefetch factor -->
       <parameter name="iterPF" type="int">2</parameter>
       <!-- modify the name of the job script -->
-      <parameter name="script">pytorch.py</parameter>
+      <parameter name="script">DDP_pytorch_AT_LD_DM.py</parameter>
     </parameterset>
-    
+
     <!-- job configuration -->
     <parameterset name="executeset">
       <parameter name="systemname" mode="shell">if [ -f /etc/FZJ/systemname ]; then cat /etc/FZJ/systemname | tr -d "\n"; else uname -n | head -c 3; fi</parameter>
@@ -43,7 +43,7 @@
           "amd": 2,
         }["${systemname}"]
       </parameter>
-      <parameter name="nlr_m" mode="python" type="float">${nodes}*${nlr}*${ngpu}</parameter>      
+      <parameter name="nlr_m" mode="python" type="float">${nodes}*${nlr}*${ngpu}</parameter>
       <parameter name="gres" separator="!" mode="python">
         { "juwelsbooster": "gpu:4",
           "jurecadc": "gpu:4",
@@ -53,21 +53,21 @@
       </parameter>
       <parameter name="account" mode="python">
         { "juwelsbooster": "slfse",
-          "jurecadc": "raise-ctp1",
+          "jurecadc": "raise-ctp2",
           "deep": "deepext",
           "amd": "bsc_case",
         }["${systemname}"]
       </parameter>
       <parameter name="datadir" mode="python">
         { "juwelsbooster": "/p/project/prcoe12/RAISE/T31_LD/",
-          "jurecadc": "/p/scratch/raise-ctp1/inanc2/T31_LD/",
+          "jurecadc": "/p/scratch/raise-ctp2/inanc2/T31_LD/",
           "deep": "/p/project/prcoe12/RAISE/T31_LD/",
-          "amd": "/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/", 
+          "amd": "/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/",
         }["${systemname}"]
       </parameter>
 
       <!-- main run -->
-      <parameter name="timelimit" tag="!devel">24:00:00</parameter>
+      <parameter name="timelimit" tag="!devel">00:30:00</parameter>
       <parameter name="queue" tag="!devel" mode="python">
         { "juwelsbooster": "booster",
           "jurecadc": "dc-gpu",
@@ -76,7 +76,7 @@
         }["${systemname}"]
       </parameter>
       <!-- devel run -->
-      <parameter name="timelimit" tag="devel">02:00:00</parameter>
+      <parameter name="timelimit" tag="devel">00:10:00</parameter>
       <parameter name="queue" tag="devel" mode="python">
         { "juwelsbooster": "develbooster",
           "jurecadc": "dc-gpu-devel",
@@ -88,24 +88,24 @@
 
     <parameterset name="envirset">
       <parameter name="load_modules" separator="!" mode="python">  {
-          "juwelsbooster": "ml Stages/2022 GCC OpenMPI cuDNN NCCL Python libaio", 
-          "jurecadc": "ml Stages/2022 NVHPC ParaStationMPI/5.5.0-1-mt Python CMake NCCL cuDNN libaio HDF5 PnetCDF mpi-settings/CUDA", 
+          "juwelsbooster": "ml Stages/2022 GCC OpenMPI cuDNN NCCL Python libaio",
+          "jurecadc": "ml --force purge; ml Stages/2022 NVHPC/22.3 ParaStationMPI/5.5.0-1-mt Python NCCL/2.12.7-1-CUDA-11.5 cuDNN libaio HDF5 mpi-settings/CUDA",
           "deep": "ml --force purge; ml use $OTHERSTAGES; ml Stages/2022 GCC OpenMPI cuDNN NCCL Python",
-          "amd": "ml gcc openmpi rocm python", 
+          "amd": "ml gcc openmpi rocm python",
         }["${systemname}"]
       </parameter>
       <parameter name="python_env" separator="!" mode="python">{
-          "juwelsbooster" : "source /p/project/prcoe12/RAISE/envAI_juwels/bin/activate", 
-          "jurecadc": "source /p/project/raise-ctp1/RAISE/envAI_jureca/bin/activate", 
-          "deep": "source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate", 
-          "amd": "source /gpfs/projects/bsc21/bsc21163/envAI_BSC/bin/activate; export LD_LIBRARY_PATH=/gpfs/projects/bsc21/bsc21163/envAI_BSC/lib:$LD_LIBRARY_PATH" 
+          "juwelsbooster" : "source /p/project/prcoe12/RAISE/envAI_juwels/bin/activate",
+          "jurecadc": "source /p/project/prcoe12/RAISE/envAI_jureca/bin/activate",
+          "deep": "source /p/project/prcoe12/RAISE/envAI_deepv/bin/activate",
+          "amd": "source /gpfs/projects/bsc21/bsc21163/envAI_BSC/bin/activate; export LD_LIBRARY_PATH=/gpfs/projects/bsc21/bsc21163/envAI_BSC/lib:$LD_LIBRARY_PATH"
       }["${systemname}"]
       </parameter>
       <parameter name="devices" separator="!" mode="python">{
           "juwelsbooster" : "export CUDA_VISIBLE_DEVICES=0,1,2,3",
           "jurecadc": "export CUDA_VISIBLE_DEVICES=0,1,2,3",
           "deep": "export CUDA_VISIBLE_DEVICES=0",
-          "amd": "export MIOPEN_DEBUG_DISABLE_FIND_DB=1" 
+          "amd": "export MIOPEN_INFO_DISABLE_FIND_DB=1"
       }["${systemname}"]
       </parameter>
     </parameterset>
@@ -137,7 +137,7 @@
       <sub source="#MODULES#" dest="$load_modules" />
       <sub source="#ENVS#" dest="$python_env" />
       <sub source="#DEVICES#" dest="$devices" />
-    </substituteset> 
+    </substituteset>
 
     <!-- operation/execution of bench -->
     <step name="submit" work_dir="JUBE/${jube_benchmark_id}_${jube_wp_id}" >
@@ -160,12 +160,13 @@
       <pattern name="batchSize" type="int">${nbs}</pattern>
       <pattern name="Nepochs" type="int">${nes}</pattern>
       <pattern name="learningRate" type="float">${nlr}</pattern>
-      <pattern name="calcTime" unit="s" type="float">\s*TIMER: total epoch-2 time:\s+$jube_pat_wrd\s*</pattern>
-      <pattern name="avgEpochT" unit="s" type="float">\s*TIMER: average epoch-2 time:\s+$jube_pat_wrd\s*</pattern>
-      <pattern name="memory" unit="MB" type="int">\s*DEBUG: memory req:\s+$jube_pat_wrd\s*</pattern>
+      <pattern name="calcTime" unit="s" type="float">\s*INFO: total epoch-2 time:\s+$jube_pat_wrd\s*</pattern>
+      <pattern name="avgEpochT" unit="s" type="float">\s*INFO: average epoch-2 time:\s+$jube_pat_wrd\s*</pattern>
+      <pattern name="Naet" unit="s" type="float" mode="python">${avgEpochT}/${nodes}</pattern>
+      <pattern name="memory" unit="MB" type="int">\s*INFO: memory req:\s+$jube_pat_wrd\s*</pattern>
       <pattern name="memoryGPU" unit="GB" type="float" mode="python">${memory}/1024</pattern>
-      <pattern name="avgTestLoss" unit="" type="float">\s*DEBUG: avg_test_loss:\s+$jube_pat_wrd\s*</pattern>
-      <pattern name="avgMeanDiff" unit="" type="float">\s*DEBUG: avg_mean_sqr_diff:\s+$jube_pat_wrd\s*</pattern>
+      <pattern name="avgTestLoss" unit="" type="float">\s*INFO: avg_test_loss:\s+$jube_pat_wrd\s*</pattern>
+      <pattern name="avgMeanDiff" unit="" type="float">\s*INFO: avg_mean_sqr_diff:\s+$jube_pat_wrd\s*</pattern>
     </patternset>
 
     <!-- analyse -->
@@ -190,6 +191,7 @@
         <column>learningRate</column>
         <column format=".3f">calcTime</column>
         <column format=".3f">avgEpochT</column>
+        <column format=".3f">Naet</column>
         <column format=".1f">memoryGPU</column>
         <column format=".10f">avgTestLoss</column>
         <column format=".3f">avgMeanDiff</column>
@@ -209,12 +211,13 @@
         <column>learningRate</column>
         <column format=".3f">calcTime</column>
         <column format=".3f">avgEpochT</column>
+        <column format=".3f">Naet</column>
         <column format=".1f">memoryGPU</column>
         <column format=".10f">avgTestLoss</column>
         <column format=".3f">avgMeanDiff</column>
       </table>
     </result>
-    
+
   </benchmark>
 </jube>
 
