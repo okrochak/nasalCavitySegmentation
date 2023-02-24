@@ -3,7 +3,7 @@
 """
 script to train a CAE model with large actuated TBL dataset
 authors: RS, EI
-version: 221021a
+version: 230221a
 notes: modified by EI
 """
 
@@ -18,6 +18,81 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn.functional import interpolate, pad
 from torchvision import datasets, transforms
+
+# parsed settings
+def pars_ini():
+    global args
+    parser = argparse.ArgumentParser(description='PyTorch-DDP actuated TBL')
+
+    # IO parsers
+    parser.add_argument('--data-dir', default='./',
+                        help='location of the training dataset in the'
+                        ' local filesystem (default: ./)')
+    parser.add_argument('--restart-int', type=int, default=10,
+                        help='restart interval per epoch (default: 10)')
+    parser.add_argument('--concM', type=int, default=1,
+                        help='increase dataset size with this factor (default: 1)')
+
+    # model parsers
+    parser.add_argument('--batch-size', type=int, default=1, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='input batch size for training (default: 1, min: 1, max: 1e9)')
+    parser.add_argument('--epochs', type=int, default=10, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='number of epochs to train (default: 10, min: 1, max: 1e9)')
+    parser.add_argument('--lr', type=float, default=0.001,
+                        help='learning rate (default: 0.001)')
+    parser.add_argument('--wdecay', type=float, default=0.003,
+                        help='weight decay in Adam optimizer (default: 0.003)')
+    parser.add_argument('--gamma', type=float, default=0.95,
+                        help='gamma in schedular (default: 0.95)')
+    parser.add_argument('--shuff', action='store_true', default=False,
+                        help='shuffle dataset (default: False)')
+    parser.add_argument('--schedule', action='store_true', default=False,
+                        help='enable scheduler in the training (default: False)')
+
+    # debug parsers
+    parser.add_argument('--testrun', action='store_true', default=False,
+                        help='do a test run with seed (default: False)')
+    parser.add_argument('--skipplot', action='store_true', default=False,
+                        help='skips test postprocessing (default: False)')
+    parser.add_argument('--export-latent', action='store_true', default=False,
+                        help='export the latent space on testing for debug (default: False)')
+    parser.add_argument('--nseed', type=int, default=0,
+                        help='seed integer for reproducibility (default: 0)')
+    parser.add_argument('--log-int', type=int, default=10,
+                        help='log interval per training (default: 10)')
+
+    # parallel parsers
+    parser.add_argument('--backend', type=str, default='nccl',
+                        help='backend for parrallelisation (default: nccl)')
+    parser.add_argument('--nworker', type=int, default=0,
+                        help='number of workers in DataLoader (default: 0 - only main)')
+    parser.add_argument('--prefetch', type=int, default=2,
+                        help='prefetch data in DataLoader (default: 2)')
+    parser.add_argument('--no-cuda', action='store_true', default=False,
+                        help='disables GPGPUs (default: False)')
+
+    # benchmarking parsers
+    parser.add_argument('--synt', action='store_true', default=False,
+                        help='use a synthetic dataset instead (default: False)')
+    parser.add_argument('--synt-dpw', type=int, default=1000, choices=range(1,int(1e7)), metavar="[1-1e9]",
+                        help='dataset size per GPU if synt is true (default: 1000, min: 1, max: 1e9)')
+    parser.add_argument('--benchrun', action='store_true', default=False,
+                        help='do a bench run w/o IO (default: False)')
+
+    # optimizations
+    parser.add_argument('--cudnn', action='store_true', default=False,
+                        help='turn on cuDNN optimizations (default: False)')
+    parser.add_argument('--amp', action='store_true', default=False,
+                        help='turn on Automatic Mixed Precision (default: False)')
+    parser.add_argument('--scale-lr', action='store_true', default=False,
+                        help='scale lr with #workers (default: False)')
+    parser.add_argument('--accum-iter', type=int, default=1,
+                        help='accumulate gradient update (default: 1 - turns off)')
+
+    args = parser.parse_args()
+
+    # set minimum of 3 epochs when benchmarking (last epoch produces logs)
+    args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
 
 # plot reconstruction
 def plot_scatter(inp_img, out_img, data_org):
@@ -90,74 +165,19 @@ def hdf5_loader(path):
     return uniform_data(torch.cat((data_u, data_v, data_w)).view(( \
             3,data_u.shape[0],data_u.shape[1],data_u.shape[2])).permute((1,0,2,3)))
 
-# parsed settings
-def pars_ini():
-    global args
-    parser = argparse.ArgumentParser(description='PyTorch-DDP actuated TBL')
+# synthetic data for benchmarking
+class SyntheticDataset_train(torch.utils.data.Dataset):
+    def __getitem__(self, idx):
+        data = torch.randn(89, 3, 192, 248)
+        target = random.randint(0, 999)
+        return (data, target)
 
-    # IO parsers
-    parser.add_argument('--data-dir', default='./',
-                        help='location of the training dataset in the'
-                        ' local filesystem (default: ./)')
-    parser.add_argument('--restart-int', type=int, default=10,
-                        help='restart interval per epoch (default: 10)')
-    parser.add_argument('--concM', type=int, default=1,
-                        help='increase dataset size with this factor (default: 1)')
+    def __len__(self):
+        return args.batch_size * gwsize * args.synt_dpw
 
-    # model parsers
-    parser.add_argument('--batch-size', type=int, default=1, choices=range(1,int(1e7)), metavar="[1-1e9]",
-                        help='input batch size for training (default: 1, min: 1, max: 1e9)')
-    parser.add_argument('--epochs', type=int, default=10, choices=range(1,int(1e7)), metavar="[1-1e9]",
-                        help='number of epochs to train (default: 10, min: 1, max: 1e9)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate (default: 0.001)')
-    parser.add_argument('--wdecay', type=float, default=0.003,
-                        help='weight decay in Adam optimizer (default: 0.003)')
-    parser.add_argument('--gamma', type=float, default=0.95,
-                        help='gamma in schedular (default: 0.95)')
-    parser.add_argument('--shuff', action='store_true', default=False,
-                        help='shuffle dataset (default: False)')
-    parser.add_argument('--schedule', action='store_true', default=False,
-                        help='enable scheduler in the training (default: False)')
-
-    # debug parsers
-    parser.add_argument('--testrun', action='store_true', default=False,
-                        help='do a test run with seed (default: False)')
-    parser.add_argument('--skipplot', action='store_true', default=False,
-                        help='skips test postprocessing (default: False)')
-    parser.add_argument('--export-latent', action='store_true', default=False,
-                        help='export the latent space on testing for debug (default: False)')
-    parser.add_argument('--nseed', type=int, default=0,
-                        help='seed integer for reproducibility (default: 0)')
-    parser.add_argument('--log-int', type=int, default=10,
-                        help='log interval per training (default: 10)')
-
-    # parallel parsers
-    parser.add_argument('--backend', type=str, default='nccl',
-                        help='backend for parrallelisation (default: nccl)')
-    parser.add_argument('--nworker', type=int, default=0,
-                        help='number of workers in DataLoader (default: 0 - only main)')
-    parser.add_argument('--prefetch', type=int, default=2,
-                        help='prefetch data in DataLoader (default: 2)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables GPGPUs (default: False)')
-    parser.add_argument('--benchrun', action='store_true', default=False,
-                        help='do a bench run w/o IO (default: False)')
-
-    # optimizations
-    parser.add_argument('--cudnn', action='store_true', default=False,
-                        help='turn on cuDNN optimizations (default: False)')
-    parser.add_argument('--amp', action='store_true', default=False,
-                        help='turn on Automatic Mixed Precision (default: False)')
-    parser.add_argument('--scale-lr', action='store_true', default=False,
-                        help='scale lr with #workers (default: False)')
-    parser.add_argument('--accum-iter', type=int, default=1,
-                        help='accumulate gradient update (default: 1 - turns off)')
-
-    args = parser.parse_args()
-
-    # set minimum of 3 epochs when benchmarking (last epoch produces logs)
-    args.epochs = 3 if args.epochs < 3 and args.benchrun else args.epochs
+class SyntheticDataset_test(SyntheticDataset_train):
+    def __len__(self):
+        return args.batch_size * gwsize
 
 # debug of the run
 def debug_ini(timer):
@@ -361,8 +381,8 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             # at least 3 epochs required with
-            # default wait=1, warmup=1, active=args.epochs, repeat=1, skip_first=0
-            schedule=torch.profiler.schedule(wait=1,warmup=1,active=args.epochs,repeat=1,skip_first=0),
+            # default wait=1, warmup=1, active=args.epochs-1, repeat=1, skip_first=0
+            schedule=torch.profiler.schedule(wait=1,warmup=1,active=args.epochs-1,repeat=1,skip_first=0),
             #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
             on_trace_ready=trace_handler,
             record_shapes=False,
@@ -589,10 +609,15 @@ def main():
     torch.backends.cudnn.benchmark = args.cudnn
 
 # load datasets
-    turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
-        loader=hdf5_loader, extensions='.hdf5')
-    test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
-         loader=hdf5_loader, extensions='.hdf5')
+    if args.synt:
+        # synthetic dataset if selected
+        turb_data = SyntheticDataset_train()
+        test_data = SyntheticDataset_test()
+    else:
+        turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
+            loader=hdf5_loader, extensions='.hdf5')
+        test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
+             loader=hdf5_loader, extensions='.hdf5')
 
 # increase dataset size if required
     largeData = []
@@ -726,7 +751,8 @@ def main():
         debug_final(logging, start_epoch, epoch, first_ep_t, last_ep_t, tot_ep_t)
 
 # start testing loop
-    test(distrib_model, loss_function, device, test_loader)
+    if not args.synt:
+        test(distrib_model, loss_function, device, test_loader)
 
 # export first batch's latent space if needed (Turn to True)
     if args.export_latent:
