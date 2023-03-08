@@ -71,7 +71,7 @@
       <parameter name="queue" tag="!devel" mode="python">
         { "juwelsbooster": "booster",
           "jurecadc": "dc-gpu",
-          "deep": "ib-esb",
+          "deep": "dp-esb",
           "amd": "bsc_case",
         }["${systemname}"]
       </parameter>
@@ -80,7 +80,7 @@
       <parameter name="queue" tag="devel" mode="python">
         { "juwelsbooster": "develbooster",
           "jurecadc": "dc-gpu-devel",
-          "deep": "ib-esb",
+          "deep": "dp-esb",
           "amd": "bsc_case",
         }["${systemname}"]
       </parameter>
