@@ -439,9 +439,11 @@
     "ax.set_xlim((0,np.amax(df[\"NGPUs\"].values+1)))\n",
     "ax.set_ylim((0,np.amax(df[\"Speedup - ideal\"].values+1)))\n",
     "\n",
+    "# hide labels if squished\n",
     "labels_x = [item.get_text() for item in ax.get_xticklabels()]\n",
     "labels_y = [item.get_text() for item in ax.get_yticklabels()]\n",
     "for i in range(len(df[\"NGPUs\"].values)):\n",
+    "    # hide 2,3,4th labels\n",
     "    labels_x[i] = '' if 0<i<4 else df[\"NGPUs\"].values[i]\n",
     "    labels_y[i] = '' if 0<i<4 else int(df[\"Speedup - ideal\"].values[i])\n",
     "ax.set_xticklabels(labels_x)\n",
@@ -463,7 +465,7 @@
     {
      "data": {
       "text/plain": [
-       "[<matplotlib.lines.Line2D at 0x16891b3d0>]"
+       "[<matplotlib.lines.Line2D at 0x131a1b490>]"
       ]
      },
      "execution_count": 6,
