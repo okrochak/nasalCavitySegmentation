@@ -59,7 +59,7 @@
         }["${systemname}"]
       </parameter>
       <parameter name="datadir" mode="python">
-        { "juwelsbooster": "/p/project/prcoe12/RAISE/T31_LD/",
+        { "juwelsbooster": "/p/scratch/raise-ctp2/inanc2/T31_LD/",
           "jurecadc": "/p/scratch/raise-ctp2/inanc2/T31_LD/",
           "deep": "/p/project/prcoe12/RAISE/T31_LD/",
           "amd": "/gpfs/scratch/bsc21/bsc21163/RAISE_Dataset/T31/",
@@ -88,7 +88,7 @@
 
     <parameterset name="envirset">
       <parameter name="load_modules" separator="!" mode="python">  {
-          "juwelsbooster": "ml Stages/2022 GCC OpenMPI cuDNN NCCL Python libaio",
+          "juwelsbooster": "ml --force purge; ml Stages/2023 StdEnv/2023 NVHPC/23.1 OpenMPI/4.1.4 cuDNN/8.6.0.163-CUDA-11.7 Python/3.10.4 HDF5 libaio",
           "jurecadc": "ml --force purge; ml Stages/2022 NVHPC/22.3 ParaStationMPI/5.5.0-1-mt Python NCCL/2.12.7-1-CUDA-11.5 cuDNN libaio HDF5 mpi-settings/CUDA",
           "deep": "ml --force purge; ml use $OTHERSTAGES; ml Stages/2022 GCC OpenMPI cuDNN NCCL Python",
           "amd": "ml gcc openmpi rocm python",
