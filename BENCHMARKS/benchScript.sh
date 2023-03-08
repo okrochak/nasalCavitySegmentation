@@ -27,8 +27,11 @@ EXEC="$COMMAND \
         --epochs #EPCS# \
         --lr #LR# \
         --nworker #NW# \
-        --cudnn \
-        --amp \
+        --shuff \
+        --scale-lr \
+        --schedule \
+        --synt \
+        --synt-dpw 100 \
         --benchrun \
         --data-dir #DATADIR#"
 
