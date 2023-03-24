@@ -3,22 +3,27 @@
 """
 script to train custom diffusion model with large actuated TBL dataset.
 instead of noise, dataset is filtered with Gaussian filter and artificial turbulence is added.
+uses PINNs in loss with 3D conv
 authors: EI, RS
-version: 230224a
-notes: for cost Perlin noise is selected, use spectral methods later on.
+version: 230314a
+notes: 
+network architecture is moved to CDM_network.py
+for cost Perlin noise is selected, use spectral methods later on.
 works for non-actuated case at this moment!
 """
 
 # std libs
 import argparse, sys, platform, os, time, h5py, random, shutil, logging
 import matplotlib.pyplot as plt, numpy as np, scipy as sp
-from perlin_noise import PerlinNoise
 
 # ml libs
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torchvision import datasets, transforms
+#from CDM_network import U_Net, AttU_Net, R2AttU_Net, cdm_2d, noise_gen_2d # 2D Conv
+from CDM_network import TDU_Net, Att3DU_Net, R2Att3DU_Net, cdm_3d, noise_gen_3d # 3D Conv
+#from lion_pytorch import Lion # TEST
 
 # parsed settings
 def pars_ini():
@@ -82,7 +87,7 @@ def pars_ini():
     parser.add_argument('--cudnn', action='store_true', default=False,
                         help='turn on cuDNN optimizations (default: False)')
     parser.add_argument('--amp', action='store_true', default=False,
-                        help='turn on Automatic Mixed Precision (default: False)')
+                        help='turn on Automatic Mixed Precision - accuracy issues! (default: False)')
     parser.add_argument('--reduce-prec', action='store_true', default=False,
                         help='reduce precision of the dataset for faster I/O (default: False)')
     parser.add_argument('--scale-lr', action='store_true', default=False,
@@ -97,16 +102,17 @@ def pars_ini():
 
 # postproc
 def plot_scatter(org_img, inp_img, out_img, epoch, sigma, final=False):
+    ns = int(org_img.shape[0]/2) # extract middle plane
     fig = plt.figure(figsize = (4,12))
     plt.rc('font', size=10)
     ax1 = fig.add_subplot(131)
-    im1 = ax1.imshow(org_img,interpolation='None')
+    im1 = ax1.imshow(org_img[ns,:,:],interpolation='None')
     ax1.set_title('Original')
     ax2 = fig.add_subplot(132)
-    im2 = ax2.imshow(inp_img, interpolation='None')
+    im2 = ax2.imshow(inp_img[ns,:,:], interpolation='None')
     ax2.set_title('Input')
     ax3 = fig.add_subplot(133)
-    im3 = ax3.imshow(out_img, interpolation='None')
+    im3 = ax3.imshow(out_img[ns,:,:], interpolation='None')
     ax3.set_title('Output')
 
     outName = 'vfield_recon_DM_train_'+str(epoch)+'_'+str(sigma)
@@ -190,7 +196,7 @@ def debug_ini(timer):
     if grank==0:
         logging.basicConfig(format='%(levelname)s: %(message)s', stream=sys.stdout, level=logging.INFO)
         logging.info('initialise: '+str(timer)+'s')
-        logging.info('local ranks: '+str(lwsize)+'/ global ranks:'+str(gwsize))
+        logging.info('local ranks: '+str(lwsize)+' / global ranks: '+str(gwsize))
         logging.info('sys.version: '+str(sys.version))
         logging.info('parsers list:')
         list_args = [x for x in vars(args)]
@@ -230,113 +236,6 @@ def debug_final(logging,start_epoch,last_epoch,first_ep_t,last_ep_t,tot_ep_t):
             logging.info('memory req: '+str(int(torch.cuda.max_memory_reserved(0)/1024/1024))+' MB')
             logging.info('memory summary:\n'+str(torch.cuda.memory_summary(0)))
 
-# network
-"""
-U-NET from
-https://github.com/milesial/Pytorch-UNet/blob/master/unet/
-"""
-class UNet(nn.Module):
-    def __init__(self, n_channels=3, n_classes=3, bilinear=True):
-        super(UNet, self).__init__()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
-        self.bilinear = bilinear
-
-        self.inc = (DoubleConv(n_channels, 64))
-        self.down1 = (Down(64, 128))
-        self.down2 = (Down(128, 256))
-        self.down3 = (Down(256, 512))
-        factor = 2 if bilinear else 1
-        self.down4 = (Down(512, 1024 // factor))
-        self.up1 = (Up(1024, 512 // factor, bilinear))
-        self.up2 = (Up(512, 256 // factor, bilinear))
-        self.up3 = (Up(256, 128 // factor, bilinear))
-        self.up4 = (Up(128, 64, bilinear))
-        self.outc = (OutConv(64, n_classes))
-
-    def forward(self, x):
-        x1 = self.inc(x)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        logits = self.outc(x)
-        return logits
-
-class DoubleConv(nn.Module):
-    """(convolution => [BN] => ReLU) * 2"""
-
-    def __init__(self, in_channels, out_channels, mid_channels=None):
-        super().__init__()
-
-        if not mid_channels:
-            mid_channels = out_channels
-
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        return self.double_conv(x)
-
-class Down(nn.Module):
-    """Downscaling with maxpool then double conv"""
-
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
-
-    def forward(self, x):
-        return self.maxpool_conv(x)
-
-class Up(nn.Module):
-    """Upscaling then double conv"""
-
-    def __init__(self, in_channels, out_channels, bilinear=True):
-        super().__init__()
-
-        # if bilinear, use the normal convolutions to reduce the number of channels
-        if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
-        else:
-            self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
-
-    def forward(self, x1, x2):
-        x1 = self.up(x1)
-        # input is CHW
-        diffY = x2.size()[2] - x1.size()[2]
-        diffX = x2.size()[3] - x1.size()[3]
-
-        x1 = nn.functional.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
-        # if you have padding issues, see
-        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
-        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
-
-class OutConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(OutConv, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv(x)
-
 # save state of the training
 def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
     rt = time.perf_counter()
@@ -360,6 +259,52 @@ def save_state(epoch,distrib_model,loss_acc,optimizer,res_name,is_best):
             logging.info('state in '+str(grank)+' is saved on epoch:'+str(epoch)+\
                     ' in '+str(time.perf_counter()-rt)+' s')
 
+"""loss defined as
+https://www.sciencedirect.com/science/article/pii/S1540748920300481
+originally for GANs
+Loss = b1*L1_adversarial + b2*L2_pixel + b3*L3_gradient + b4*L_physics
+L1_adversial = 0 as no GANs here
+"""
+# custom loss function
+class custom_loss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # constants and specing
+        self.b2 = 0.88994
+        self.b3 = 0.06
+        self.b4 = 0.05
+        self.del_x = 0.2598e-3
+        self.del_y = torch.tensor(np.loadtxt(args.data_dir+'coords_y.dat')[:-9]*1e-3,\
+                dtype=torch.float32).to(device)
+        self.del_z = 0.0866e-3
+
+    def forward(self, inputs, targets):
+        # loss pixel
+        L_2 = self.b2*torch.mean((inputs-targets)**2.0)
+
+        # loss gradient
+        # compute 3 gradients of inputs and targets
+        ix = torch.gradient(inputs, spacing=self.del_x,dim=4)[0]
+        iy = torch.gradient(inputs, spacing=(self.del_y,),dim=2)[0]
+        iz = torch.gradient(inputs, spacing=self.del_z,dim=3)[0]
+        tx = torch.gradient(targets,spacing=self.del_x,dim=4)[0]
+        ty = torch.gradient(targets,spacing=(self.del_y,),dim=2)[0]
+        tz = torch.gradient(targets,spacing=self.del_z,dim=3)[0]
+        # MSE of gradient of the inputs to targets
+        L_3  = self.b3*torch.mean((ix-tx)**2.0)
+        L_3 += self.b3*torch.mean((iy-ty)**2.0)
+        L_3 += self.b3*torch.mean((iz-tz)**2.0)
+
+        # loss physics - compressibility (need 3D conv)
+        # dudx + dvdy + dwdz != 0
+        L_4 = self.b4*torch.mean((tx[:,0,:,:,:] + ty[:,1,:,:,:] + tz[:,2,:,:,:]).abs())
+
+        # normalise L3-L4 wrt L2 so each L are in the same magnitude
+        L_3 = L_3 / 10.0**torch.ceil(torch.log10(L_3/L_2))
+        L_4 = L_4 / 10.0**torch.ceil(torch.log10(L_4/L_2))
+
+        return L_2+L_3+L_4
+
 # deterministic dataloader
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
@@ -371,50 +316,6 @@ def trace_handler(prof):
     #prof.export_chrome_trace("/tmp/test_trace_" + str(prof.step_num) + ".json")
     if grank==0:
         logging.info('profiler called a trace')
-
-# diffusion model for ATB
-class diff_model:
-    def __init__(self,inputs,noise_map,epoch=1,sigma=None,eps=1e-2):
-        # start a timer
-        lt = time.perf_counter()
-
-        # stacks,u_i,n_x,n_y
-        m,n,a,b = inputs.shape[:]
-
-        # level of diffusion over epochs (modify if sigma is not given in arg)
-        if sigma is None:
-            sigma = 1.0 if epoch >     0 else sigma
-            sigma = 2.0 if epoch >  4000 else sigma
-            sigma = 3.0 if epoch >  8000 else sigma
-            sigma = 4.0 if epoch > 12000 else sigma
-            sigma = 5.0 if epoch > 16000 else sigma
-        self.sigma = sigma
-
-        # generate Perlin noise only if dimensions of input changed (expensive)
-        try:
-            try_e = inputs[0,0,:,:] + noise_map
-        except ValueError:
-            noise_map = noise_gen(a,b)
-            if grank==0:
-                logging.info('noise regenerated!')
-
-        # apply filter with added noise for diffusion
-        self.inputs_dm = torch.clone(inputs)
-        if sigma>1.01:
-            # 2D-Gaussian filter with sigma (size=2*r+1, w/ r=round(sigma,truncate), truncate=1 to get desired r)
-            for i in range(m):
-                for j in range(n):
-                    res = sp.ndimage.gaussian_filter(inputs[i,j,:,:], self.sigma, truncate=1.0)
-                    self.inputs_dm[i,j,:,:] = torch.from_numpy(res + noise_map*eps)
-
-        self.et = time.perf_counter()-lt
-
-# noise generator
-def noise_gen(xpix,ypix):
-    # Perlin noise
-    noise = PerlinNoise(octaves=10)
-    noise_map = [[noise([i/xpix, j/ypix]) for i in range(ypix)] for j in range(xpix)]
-    return np.array(noise_map)
 
 # train loop
 def train(model, sampler, loss_function, device, train_loader, optimizer, epoch, scheduler, noise_map):
@@ -473,11 +374,12 @@ def train(model, sampler, loss_function, device, train_loader, optimizer, epoch,
     sampler.set_epoch(epoch)
     for batch_ndx, (samples) in enumerate(train_loader):
         do_backprop = ((batch_ndx + 1) % args.accum_iter == 0) or (batch_ndx + 1 == len(train_loader))
-        inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float()
+        #inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float()
+        inputs = samples.inp.permute(0,2,1,3,4).float()
 
         # diffusion model
         lt_3 = time.perf_counter()
-        data = diff_model(inputs, noise_map, epoch)
+        data = cdm_3d(inputs, noise_map, epoch)
         lt_2 += time.perf_counter() - lt_3
 
         # adjust LR with sigma just testing!
@@ -556,10 +458,11 @@ def test(model, loss_function, device, test_loader, noise_map):
         mean_sqr_diff = 0.0
         with torch.no_grad():
             for count, (samples) in enumerate(test_loader):
-                inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+                #inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
+                inputs = samples.inp.permute(0,2,1,3,4).float().to(device)
 
                 # test highly diffused image for diffusion model
-                data = diff_model(inputs.cpu(), noise_map, sigma=sigma_test)
+                data = cdm_3d(inputs.cpu(), noise_map, sigma=sigma_test)
                 predictions = model(data.inputs_dm.to(device)).float()
                 loss = loss_function(predictions, inputs.to(device)) / args.accum_iter
                 test_loss+= torch.nan_to_num(loss).item()/inputs.shape[0]
@@ -585,20 +488,6 @@ def test(model, loss_function, device, test_loader, noise_map):
 
     if grank==0:
         logging.info('total testing time: {:.2f}'.format(time.perf_counter()-et)+' s')
-
-# encode export
-def encode_exp(encode, device, train_loader):
-    for batch_ndx, (samples) in enumerate(train_loader):
-        inputs = samples.inp.view(1, -1, *(samples.inp.size()[2:])).squeeze(0).float().to(device)
-        predictions = encode(inputs).float()
-
-        # export the data
-        inp = inputs.to('cpu').detach().numpy()
-        h5f = h5py.File('./test_'+str(batch_ndx)+'_'+str(grank)+'.h5', 'w')
-        h5f.create_dataset('input', data=inputs.cpu().detach().numpy())
-        h5f.create_dataset('prediction', data=predictions.cpu().detach().numpy())
-        h5f.close()
-        break
 
 def adjust_learning_rate(optimizer, sigma, factor):
     for param_group in optimizer.param_groups:
@@ -696,7 +585,7 @@ def main():
         g.manual_seed(args.nseed)
 
 # get job rank info -- rank==0 master gpu
-    global lwsize, gwsize, grank, lrank
+    global device, lwsize, gwsize, grank, lrank
     lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node (0 if CPU run)
     gwsize = dist.get_world_size()     # global world size - per run
     grank = dist.get_rank()            # global rank - assign per run
@@ -724,7 +613,7 @@ def main():
         turb_data = datasets.DatasetFolder(args.data_dir+'trainfolder',\
             loader=hdf5_loader, extensions='.hdf5')
         test_data = datasets.DatasetFolder(args.data_dir+'testfolder',\
-             loader=hdf5_loader, extensions='.hdf5')
+            loader=hdf5_loader, extensions='.hdf5')
 
 # increase dataset size if required
     largeData = []
@@ -761,7 +650,9 @@ def main():
         logging.info('read data: '+str(time.perf_counter()-st)+'s\n')
 
     # create model
-    model = UNet().to(device)
+    #model = TDU_Net().to(device) # 3D U-Net
+    model = Att3DU_Net().to(device) # Attention 3D U-Net
+    #model = R2Att3DU_Net().to(device) #Residual Recurrent Attention 3D U-Net, !memory problems!
 
 # distribute model to workers
     if args.cuda:
@@ -774,9 +665,10 @@ def main():
     lr_scale = gwsize if args.scale_lr else 1
 
 # optimizer
-    loss_function = nn.MSELoss()
+    loss_function = custom_loss()
     #optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
     optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale)
+    #optimizer = Lion(distrib_model.parameters(), lr=args.lr*lr_scale) # faster convergence, worse acc
 
 # scheduler
     #scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
@@ -791,9 +683,21 @@ def main():
         logging.info('total distributed trainable parameters: '+str(tpt_d)+'\n')
 
 # preprocess noise map (too ugly, fix later)
-    sample = next(iter(train_loader))
-    a,b = sample.inp.view(1, -1, *(sample.inp.size()[2:])).squeeze(0).float().shape[-2:]
-    noise_map = noise_gen(a,b)
+    et = time.perf_counter()
+    res_name='noise_map.h5'
+    if os.path.isfile(res_name):
+        # read noise_map
+        with h5py.File(res_name, 'r') as h5f:
+            a_group_key = list(h5f.keys())[0]
+            noise_map = h5f[a_group_key][()]
+    else:
+        # generate noise_map if not existent (expensive)
+        sample = next(iter(train_loader))
+        a,b,c = sample.inp.permute(0,2,1,3,4).float().shape[2::]
+        noise_map = noise_gen_3d(a,b,c)
+        with h5py.File(res_name, 'w') as h5f:
+            h5f.create_dataset(res_name, data=noise_map)
+    logging.info('Noise read in: {:.2f}'.format(time.perf_counter()-et)+' s\n')
 
 # resume state
     start_epoch = 1
