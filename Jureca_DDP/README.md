@@ -14,10 +14,11 @@ discussion in: https://github.com/pytorch/pytorch/issues/73656
 2. for containers, instead of #1, use `fixed_torch_run.py` -- follow usage - containers.
 
 # to-do
-1. test containers (for NVIDIA partition)
+1. 
 
 # done
-1. tested containers (for AMD partition):\
+1. tested containers (for both NVIDIA & AMD GPUs):\
+https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch \
 https://www.amd.com/en/technologies/infinity-hub/pytorch \
 https://hub.docker.com/r/rocm/pytorch
  

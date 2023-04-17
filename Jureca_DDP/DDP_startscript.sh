@@ -2,7 +2,7 @@
 
 # general configuration of the job
 #SBATCH --job-name=TorchTest
-#SBATCH --account=raise-ctp1
+#SBATCH --account=zam
 #SBATCH --mail-user=
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
