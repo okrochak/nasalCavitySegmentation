@@ -45,6 +45,12 @@
 #   - Torch library additions for popular datasets and their transformations
 # - ray libray (https://www.ray.io/)
 #   - Framework for distributed computing with a focus on hyperparameter optimization
+# - pytz library (https://pythonhosted.org/pytz/)
+#   - Library for accurate and cross platform timezone calculation 
+# - python-dateutil (https://github.com/dateutil/dateutil)
+#   - Extension to pythons datetimes features
+# - typing-extensions (https://pypi.org/project/typing-extensions/)
+#   - Support for different type systems
 #
 # @section notes_doxygen_example Notes
 # - None.
