@@ -46,6 +46,8 @@ and
 --address "$head_node"i:"$port"
 ```
 
+If multiple Ray instances run on the same machine, there might be problems if all use the same port value (7638), so it is advisable to change it to a different value in that case. 
+
 
 
 

@@ -2,10 +2,10 @@
 # shellcheck disable=SC2206
 
 #SBATCH --job-name=ray_cifar_test
-#SBATCH --account=raise-ctp2
+#SBATCH --account=
 #SBATCH --output=ray_test_cifar.out
 #SBATCH --error=ray_test_cifar.err
-#SBATCH --partition=dc-gpu-devel
+#SBATCH --partition=dc-gpu
 #SBATCH --nodes=2
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=128
@@ -17,7 +17,7 @@ ml --force purge
 
 ml Stages/2023  GCC/11.3.0  OpenMPI/4.1.4 PyTorch/1.12.0-CUDA-11.7 torchvision/0.13.1-CUDA-11.7
 
-source /p/project/cslfse/aach1/NAS/ray_2/ray_tune_env/bin/activate
+source ray_tune_env/bin/activate
 
 COMMAND="cifar_tune_bohb.py --scheduler BOHB --num-samples 12 --par-workers 2 --max-iterations 2 --data-dir /p/scratch/raise-ctp2/cifar10/data "
 
