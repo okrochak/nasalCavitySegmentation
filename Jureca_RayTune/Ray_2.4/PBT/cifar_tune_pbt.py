@@ -1,5 +1,64 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""! @brief AI4HPC """ 
+
+##
+# @mainpage AI4HPC
+#
+# @section description_main Description
+# Hyperparameter optimization of neural networks with Ray Tune library.
+#
+#
+#
+# @section notes_main Notes
+# - The data directory of the cifar-10 dataset has the be specified in the startscript
+#
+# Copyright (c) 2023 RAISE, All rights reserved.
+
+
+##
+# @file cifar_tune_pbt.py
+#
+# @brief Optimizing the hyperparameters of a ResNet18 trained on the cifar-10 dataset with Ray Tune libray and the PBT algorithm.
+#
+# @section description_cifar_tune_pbt description
+# A standard ResNet18 model is trained on the cifar-10 vision dataset. To optimize the performance, multiple 
+# training runs (trials) with different hyperparameters (chagend learning rate and batch size) are performed using 
+# the Ray Tune library. The overall hyperparameter optimization process, as well as the single training runs can be 
+# parallelized across multiple GPUs. Trials with low performance (in terms of test set acuracy) copy the hyperparameters
+# of better performing trials and apply mutations with the PBT aglorithm.
+#
+# @section libraries_main Libraries/Modules
+# - argparse standard library (https://docs.python.org/3/library/argparse.html)
+#   - Parse command-line options 
+# - sys standard library (https://docs.python.org/3/library/sys.html)
+#   - System commands
+# - os standard library (https://docs.python.org/3/library/os.html)
+#   - OS commands 
+# - time standard library (https://docs.python.org/3/library/time.html)
+#   - Access timers for profilers 
+# - numpy library (https://numpy.org/)
+#   - Access numpy functions
+# - torch library (https://pytorch.org/)
+#   - ML framework
+# - torchvision library (https://pypi.org/project/torchvision/)
+#   - Torch library additions for popular datasets and their transformations
+# - ray libray (https://www.ray.io/)
+#   - Framework for distributed computing with a focus on hyperparameter optimization
+#
+# @section notes_doxygen_example Notes
+# - None.
+#
+# @section todo TODO
+# - None.
+#
+# @section author Author(s)
+# - Created by MA on 04/05/2023.
+# - Modified by 
+#
+# Copyright (c) 2023 RAISE, All rights reserved.
+
 # load general modules
-from typing import Dict
 import argparse
 import os
 import time
@@ -19,8 +78,7 @@ import ray
 from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import PopulationBasedTraining
-from ray.air import session, Checkpoint
-from ray.air import RunConfig
+from ray.air import session, Checkpoint, RunConfig
 import ray.train as train
 from ray.train.torch import TorchTrainer
 from ray.air.config import ScalingConfig
