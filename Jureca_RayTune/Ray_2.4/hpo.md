@@ -13,12 +13,12 @@ bash build_ray_env.py
 
 After installation, several example are available:
 
-1. [Optimizing a ResNet18 on cifar-10 with AHSA or Random Search schedulers] 
-2. [Optimizing a ResNet18 on cifar-10 with BOHB or Random Search schedulers]
-3. [Optimizing a ResNet18 on cifar-10 with PBT or Random Search schedulers (including checkpointing)]
+1. [Optimizing a ResNet18 on cifar-10 with AHSA or Random Search schedulers](https://gitlab.jsc.fz-juelich.de/CoE-RAISE/FZJ/ai-for-hpc/-/tree/main/Jureca_RayTune/Ray_2.4/ASHA)
+2. [Optimizing a ResNet18 on cifar-10 with BOHB or Random Search schedulers](https://gitlab.jsc.fz-juelich.de/CoE-RAISE/FZJ/ai-for-hpc/-/tree/main/Jureca_RayTune/Ray_2.4/BOHB)
+3. [Optimizing a ResNet18 on cifar-10 with PBT or Random Search schedulers (including checkpointing)](https://gitlab.jsc.fz-juelich.de/CoE-RAISE/FZJ/ai-for-hpc/-/tree/main/Jureca_RayTune/Ray_2.4/PBT)
 
 
-The ASHA scheduler is a variation of Random Search with early stopping of under-performing trials. The BOHB scheduler uses Bayesian Optimization in combination with early stopping, while the PBT scheduler uses evolutionary optimization and is well suited for optimizing non-stationary hyperparameters (such as learning rate schedules). 
+The [ASHA](https://arxiv.org/pdf/1810.05934.pdf) scheduler is a variation of Random Search with early stopping of under-performing trials. The [BOHB](http://proceedings.mlr.press/v80/falkner18a/falkner18a.pdf) scheduler uses Bayesian Optimization in combination with early stopping, while the [PBT](https://arxiv.org/pdf/1711.09846.pdf) scheduler uses evolutionary optimization and is well suited for optimizing non-stationary hyperparameters (such as learning rate schedules). 
 
 The following parameters can be set for each script:
 
