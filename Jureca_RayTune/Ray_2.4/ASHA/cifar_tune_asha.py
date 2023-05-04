@@ -340,6 +340,10 @@ def main(args):
     
     print("Best result metrics: ", best_result) 
 
+    # print results dataframe
+    print("Result dataframe: ")
+    print(result.get_dataframe().sort_values("test_acc", ascending=False))
+
 
 if __name__ == "__main__":
     
