@@ -12,11 +12,11 @@ https://docs.csc.fi/apps/pytorch/
 # current isues
 1. SQL DB file lock?
 2. no apptainer (singularity is too old)
-3. all_reduce is not working on LUMI example in \
-https://github.com/Lumi-supercomputer/lumi-reframe-tests/tree/main/checks/apps/deeplearning/pytorch/src
+3. not stable after 32 nodes
 
 # to-do
 1. further tests
+2. gloo as backend seems more stable?
 
 # done
 1. initial runs (with issues)

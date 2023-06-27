@@ -2,7 +2,7 @@
 
 # general configuration of the job
 #SBATCH --job-name=TorchTest
-#SBATCH --account=project_465000280
+#SBATCH --account=project_465000625
 #SBATCH --mail-user=
 #SBATCH --mail-type=ALL
 #SBATCH --output=job.out
@@ -17,22 +17,35 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=7
 #SBATCH --gpus-per-node=8
+#SBATCH --mem=0
 #SBATCH --exclusive
 
 # parameters
 dataDir='/scratch/${SBATCH_ACCOUNT}/RAISE_datasets/actuated_tbl/'
-COMMAND="DDP_pytorch_AT_LD_mod.py"
-EXEC="$COMMAND --epochs 1 --batch-size 1 --concM 1 --benchrun \
-       --nworker $SLURM_CPUS_PER_TASK --data-dir $dataDir"
+COMMAND="DDP_ATBL_CDM.py"
+EXEC="$COMMAND \
+        --batch-size 2 \
+        --epochs 10 \
+        --lr 0.0001 \
+        --nworker $SLURM_CPUS_PER_TASK \
+        --shuff \
+        --scale-lr \
+        --schedule \
+        --synt \
+        --synt-dpw 100 \
+        --benchrun \
+        --data-dir $dataDir"
+
 
 ### do not modify below ###
 
+
 # set modules
 #-standard
-#ml LUMI/22.08 partition/G rocm/5.0.2 ModulePowerUser/LUMI buildtools cray-python/3.9.12.1
+#ml LUMI/22.08 partition/G rocm
 #-preconfig by LUMI support
 module use /pfs/lustrep2/projappl/project_462000125/samantao-public/mymodules
-module load aws-ofi-rccl/sam-rocm-5.3.3.lua
+module load aws-ofi-rccl/rocm-5.5.0
 #-CSC https://docs.lumi-supercomputer.eu/software/local/csc/
 #ml use /appl/local/csc/modulefiles
 #ml pytorch
@@ -46,24 +59,32 @@ unset GREP_OPTIONS
 export HIP_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
 export ROCR_VISIBLE_DEVICES=$SLURM_LOCALID
 export LD_LIBRARY_PATH=$HIP_LIB_PATH:$LD_LIBRARY_PATH
+export CUDA_LAUNCH_BLOCKING=1
+export HIP_LAUNCH_BLOCKING=1
 #-threads
 export OMP_NUM_THREADS=1
 if [ "$SLURM_CPUS_PER_TASK" > 0 ] ; then
   export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 fi
 #-nccl
-export NCCL_SOCKET_IFNAME=hsn
+export NCCL_SOCKET_IFNAME=hsn0,hsn1,hsn2,hsn3
 export NCCL_NET_GDR_LEVEL=3
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_IB_TIMEOUT=50
+export UCX_RC_TIMEOUT=4s
+export NCCL_IB_RETRY_CNT=10
 #-miopen
-mkdir -p /tmp/${USER}-miopen-cache-${SLURM_JOB_ID}
-export MIOPEN_USER_DB_PATH=/tmp/${USER}-miopen-cache-${SLURM_JOB_ID}
-export MIOPEN_CUSTOM_CACHE_DIR=${MIOPEN_USER_DB_PATH}
+export MIOPEN_DISABLE_CACHE=1
+export MIOPEN_USER_DB_PATH=/tmp/miopen-userdb-${USER}
+export MIOPEN_CUSTOM_CACHE_DIR=/tmp/miopen-cache-${USER}
 #-rocm
 export CXI_FORK_SAFE=1
 export CXI_FORK_SAFE_HP=1
 export FI_CXI_DISABLE_CQ_HUGETLB=1
+#-slurm
+export SLURM_MPI_TYPE=pmi2
 
-# job info 
+# job info
 echo "DEBUG: TIME: $(date)"
 echo "DEBUG: EXECUTE: $EXEC"
 echo "DEBUG: SLURM_SUBMIT_DIR: $SLURM_SUBMIT_DIR"
@@ -83,7 +104,7 @@ srun --cpu-bind=none bash -c "torchrun \
     --nproc_per_node=$SLURM_GPUS_PER_NODE \
     --rdzv_id=$SLURM_JOB_ID \
     --rdzv_backend=c10d \
-    --rdzv_endpoint='$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)':39591 \
+    --rdzv_endpoint='$(scontrol show hostname "$SLURM_NODELIST" | head -n 1)':24900 \
     $EXEC"
 
 # eof
