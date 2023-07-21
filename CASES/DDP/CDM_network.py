@@ -743,17 +743,15 @@ class cdm_2d:
             try_e = inputs[0,0,:,:] + noise_map
         except ValueError:
             noise_map = noise_gen_2d(a,b)
-            if grank==0:
-                logging.info('noise regenerated!')
 
         # apply filter with added noise for diffusion
-        self.inputs_dm = torch.clone(inputs)
+        self.inputs_cdm = torch.clone(inputs)
         if sigma>1.01:
             # 2D-Gaussian filter with sigma (size=2*r+1, w/ r=round(sigma,truncate), truncate=1 to get desired r)
             for i in range(m):
                 for j in range(n):
                     res = sp.ndimage.gaussian_filter(inputs[i,j,:,:], self.sigma, truncate=1.0)
-                    self.inputs_dm[i,j,:,:] = torch.from_numpy(res + noise_map*eps)
+                    self.inputs_cdm[i,j,:,:] = torch.from_numpy(res + noise_map*eps)
 
         self.et = time.perf_counter()-lt
 
@@ -781,17 +779,15 @@ class cdm_3d:
             try_e = inputs[0,0,:,:,:] + noise_map
         except ValueError:
             noise_map = noise_gen_3d(a,b,c)
-            if grank==0:
-                logging.info('noise regenerated!')
 
         # apply filter with added noise for diffusion
-        self.inputs_dm = torch.clone(inputs)
+        self.inputs_cdm = torch.clone(inputs)
         if sigma>1.01:
             # 2D-Gaussian filter with sigma (size=2*r+1, w/ r=round(sigma,truncate), truncate=1 to get desired r)
             for i in range(m):
                 for j in range(n):
                     res = sp.ndimage.gaussian_filter(inputs[i,j,:,:,:], self.sigma, truncate=1.0)
-                    self.inputs_dm[i,j,:,:,:] = torch.from_numpy(res + noise_map*eps)
+                    self.inputs_cdm[i,j,:,:,:] = torch.from_numpy(res + noise_map*eps)
 
         self.et = time.perf_counter()-lt
 

@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt, numpy as np, scipy as sp
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import horovod.torch as hvd
 from torchvision import datasets, transforms
 #from CDM_network import U_Net, AttU_Net, R2AttU_Net, cdm_2d, noise_gen_2d # 2D Conv
 from CDM_network import TDU_Net, Att3DU_Net, R2Att3DU_Net, cdm_3d, noise_gen_3d # 3D Conv
@@ -61,6 +62,9 @@ def pars_ini():
                         help='shuffle dataset (default: False)')
     parser.add_argument('--schedule', action='store_true', default=False,
                         help='enable scheduler in the training (default: False)')
+    parser.add_argument('--gradient-predivide-factor', type=float, default=1.0,
+                        help='apply gradient predivide factor in optimizer,'
+                        'note: Horovod only! (default: 1.0)')
 
     # debug parsers
     parser.add_argument('--testrun', action='store_true', default=False,
@@ -81,6 +85,9 @@ def pars_ini():
                         help='prefetch data in DataLoader (default: 2)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables GPGPUs (default: False)')
+    parser.add_argument('--use-fork', action='store_true', default=False,
+                        help='use forkserver for dataloading,'
+                        'note: Horovod only! + problems with IB (default: False)')
 
     # benchmarking parsers
     parser.add_argument('--synt', action='store_true', default=False,
@@ -103,6 +110,16 @@ def pars_ini():
                         help='scale lr with sigma in CDM (default: False)')
     parser.add_argument('--accum-iter', type=int, default=1,
                         help='accumulate gradient update (default: 1 - turns off)')
+    parser.add_argument('--fp16-allreduce', action='store_true', default=False,
+                        help='use fp16 compression during allreduce,'
+                        'note: Horovod only! (default: False)')
+    parser.add_argument('--use-adasum', action='store_true', default=False,
+                        help='use adasum algorithm to do reduction,'
+                        'ignores scale-lr option, note: Horovod only (default: false)')
+    parser.add_argument('--batch-per-allreduce', type=int, default=1,
+                        help='number of batches processed locally before '
+                        'executing allreduce across workers; it multiplies '
+                        'total batch size, note: Horovod only (default: 1 - turns off)')
 
     args = parser.parse_args()
 
@@ -558,65 +575,19 @@ def adjust_learning_rate(optimizer, sigma, factor):
 def par_sum(field):
     res = torch.tensor(field).float()
     res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.SUM,group=None,async_op=True).wait()
+    hvd.allreduce_(res, average=False)
     return res
 
 # mean of field over GPGPUs
 def par_mean(field):
     res = torch.tensor(field).float()
     res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.SUM,group=None,async_op=True).wait()
-    res/=gwsize
-    return res
-
-# max(field) over GPGPUs
-def par_max(field):
-    res = torch.tensor(field).float()
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.MAX,group=None,async_op=True).wait()
-    return res
-
-# min(field) over GPGPUs
-def par_min(field):
-    res = torch.tensor(field).float()
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.all_reduce(res,op=dist.ReduceOp.MIN,group=None,async_op=True).wait()
-    return res
-
-# reduce field to destination with an operation
-def par_reduce(field,dest,oper):
-    '''
-    dest=0 will send the result to GPU on rank 0 (any rank is possible)
-    op=oper has to be in form "dist.ReduceOp.<oper>", where <oper> is
-      SUM
-      PRODUCT
-      MIN
-      MAX
-      BAND
-      BOR
-      BXOR
-    '''
-    res = torch.Tensor([field])
-    res = res.cuda() if args.cuda else res.cpu()
-    dist.reduce(res,dst=dest,op=oper,group=None,async_op=False)
-    return res
-
-# gathers tensors from the whole group in a list (to all workers)
-def par_allgather(field):
-    if args.cuda:
-        sen = torch.Tensor([field]).cuda()
-        res = [torch.Tensor([field]).cuda() for i in range(gwsize)]
-    else:
-        sen = torch.Tensor([field])
-        res = [torch.Tensor([field]) for i in range(gwsize)]
-    dist.all_gather(res,sen,group=None)
+    hvd.allreduce_(res, average=True)
     return res
 
 # gathers any object from the whole group in a list (to all workers)
 def par_allgather_obj(obj):
-    res = [None]*gwsize
-    dist.all_gather_object(res,obj,group=None)
-    return res
+    return hvd.allgather_object(obj)
 #
 #
 # MAIN
@@ -636,7 +607,7 @@ def main():
     st = time.perf_counter()
 
 # initializes the distributed backend which will take care of sychronizing nodes/GPUs
-    dist.init_process_group(backend=args.backend)
+    hvd.init()
 
 # deterministic testrun
     if args.testrun:
@@ -646,10 +617,10 @@ def main():
 
 # get job rank info -- rank==0 master gpu
     global device, lwsize, gwsize, grank, lrank
-    lwsize = torch.cuda.device_count() if args.cuda else 0 # local world size - per node (0 if CPU run)
-    gwsize = dist.get_world_size()     # global world size - per run
-    grank = dist.get_rank()            # global rank - assign per run
-    lrank = dist.get_rank()%lwsize     # local rank - assign per node
+    gwsize = hvd.size()       # global world size - per run
+    lwsize = hvd.local_size() # local world size - per node
+    grank =  hvd.rank()       # global rank - assign per run
+    lrank =  hvd.local_rank() # local rank - assign per node
 
     # debug of the run
     logging = debug_ini(time.perf_counter()-st)
@@ -710,29 +681,40 @@ def main():
         logging.info('read data: '+str(time.perf_counter()-st)+'s\n')
 
     # create model
-    #model = TDU_Net().to(device) # 3D U-Net
-    model = Att3DU_Net().to(device) # Attention 3D U-Net
-    #model = R2Att3DU_Net().to(device) #Residual Recurrent Attention 3D U-Net, !memory problems!
-
-# distribute model to workers
-    if args.cuda:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model,\
-            device_ids=[device], output_device=device)
-    else:
-        distrib_model = torch.nn.parallel.DistributedDataParallel(model)
+    #distrib_model = TDU_Net().to(device) # 3D U-Net
+    distrib_model = Att3DU_Net().to(device) # Attention 3D U-Net
+    #distrib_model = R2Att3DU_Net().to(device) #Residual Recurrent Attention 3D U-Net, !memory problems!
 
     # scale lr with #workers
     lr_scale = gwsize if args.scale_lr else 1
 
+    # By default, Adasum doesn't need scaling up learning rate.
+    if args.cuda:
+        # If using GPU Adasum allreduce, scale learning rate by local_size.
+        lr_scale = lwsize if args.use_adasum else lr_scale
+
+    # Horovod: (optional) compression algorithm.
+    compression = hvd.Compression.fp16 if args.fp16_allreduce else hvd.Compression.none
+
 # optimizer
-    loss_function = custom_loss()
+    loss_function = nn.MSELoss()
     #optimizer = torch.optim.SGD(distrib_model.parameters(), lr=args.lr*lr_scale, weight_decay=args.wdecay)
     optimizer = torch.optim.Adam(distrib_model.parameters(), lr=args.lr*lr_scale)
-    #optimizer = Lion(distrib_model.parameters(), lr=args.lr*lr_scale) # faster convergence, worse acc
-
-# scheduler
     #scheduler_lr = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
     scheduler_lr = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=4000)
+
+# distribute model to workers
+    # Horovod: broadcast parameters & optimizer state
+    hvd.broadcast_parameters(distrib_model.state_dict(), root_rank=0)
+    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
+    # Horovod: wrap optimizer with DistributedOptimizer
+    optimizer = hvd.DistributedOptimizer(optimizer, \
+                                named_parameters=distrib_model.named_parameters(), \
+                                op=hvd.Adasum if args.use_adasum else hvd.Average, \
+                                compression=compression, \
+                                gradient_predivide_factor=args.gradient_predivide_factor, \
+                                backward_passes_per_step=args.batch_per_allreduce)
 
     # used lr and info on num. of parameters
     if grank==0:
@@ -839,7 +821,7 @@ def main():
 # clean-up
     if grank==0:
         logging.info('final time: {:.2f}'.format(time.perf_counter()-st)+' s')
-    dist.destroy_process_group()
+    hvd.shutdown()
 
 if __name__ == "__main__":
     main()
