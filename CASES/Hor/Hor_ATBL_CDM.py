@@ -215,21 +215,18 @@ def hdf5_loader(path):
             print(f'box is too large, larger than the domain size!')
             sys.exit()
         # randomly cut boxes from the domain and stack them together
-        cut_u = torch.ones((a,a,a))
-        cut_v = torch.ones((a,a,a))
-        cut_w = torch.ones((a,a,a))
-        stack_u = torch.clone(cut_u)
-        stack_v = torch.clone(cut_v)
-        stack_w = torch.clone(cut_w)
+        stack_u = data_u[:a,:a,:a]
+        stack_v = data_v[:a,:a,:a]
+        stack_w = data_w[:a,:a,:a]
         for c in range(concat):
             # random numbers, not exceeding domain length
             n = random.randint(0, data_u.size()[0]-a)
             m = random.randint(0, data_u.size()[1]-a)
-            j = random.randint(0, data_u.size()[2]-a)
+            p = random.randint(0, data_u.size()[2]-a)
             # cut
-            cut_u = data_u[n:n+a,m:m+a,j:j+a]
-            cut_v = data_v[n:n+a,m:m+a,j:j+a]
-            cut_w = data_w[n:n+a,m:m+a,j:j+a]
+            cut_u = data_u[n:n+a,m:m+a,p:p+a]
+            cut_v = data_v[n:n+a,m:m+a,p:p+a]
+            cut_w = data_w[n:n+a,m:m+a,p:p+a]
             # stack
             stack_u = torch.cat((stack_u,cut_u))
             stack_v = torch.cat((stack_v,cut_v))
