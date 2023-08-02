@@ -39,6 +39,8 @@ def pars_ini():
                         help='restart interval per epoch (default: 100)')
     parser.add_argument('--cube', action='store_true', default=False,
                         help='cut cubes that is being cut from the sample instead of full field (default: False)')
+    parser.add_argument('--cubeC', type=int, default=2,
+                        help='if 1, cut random cubes -- if 2, cut cubes in monotonic order (default: 2)')
     parser.add_argument('--cubeD', type=int, default=16,
                         help='size of the cube that is being cut from the sample (default: 16)')
     parser.add_argument('--cubeM', type=int, default=20,
@@ -190,22 +192,35 @@ def hdf5_loader(path):
 
     if args.cube:
         # cut a**3 cube from data for sampling
-        a = args.cubeD # cube dims
-        concat = args.cubeM # #random cubes
+        a = args.cubeD # cube dims -- def:16
+        concat = args.cubeM # #random cubes -- def:20
         try:
+            """
+            Mathematically args.cubeD should be smaller than the smallest size of a field. 
+            But, you may comment out try/except part to see if it works for you
+            """
             assert a<data_u.size()[0] and a<data_u.size()[1] and a<data_u.size()[2]
         except AssertionError:
             print(f'box is too large, larger than the domain size!')
             sys.exit()
-        # randomly cut boxes from the domain and stack them together
+        # cut boxes from the domain and stack them together
         stack_u = data_u[:a,:a,:a]
         stack_v = data_v[:a,:a,:a]
         stack_w = data_w[:a,:a,:a]
         for c in range(concat):
-            # random numbers, not exceeding domain length
-            n = random.randint(0, data_u.size()[0]-a)
-            m = random.randint(0, data_u.size()[1]-a)
-            p = random.randint(0, data_u.size()[2]-a)
+            if case == args.cubeC:
+                # random numbers, not exceeding domain length
+                n = random.randint(0, data_u.size()[0]-a)
+                m = random.randint(0, data_u.size()[1]-a)
+                p = random.randint(0, data_u.size()[2]-a)
+            elif case == args.cubeC:
+                # monotonical list of numbers, not exceeding domain length -- default
+                n = np.linspace(a, data_u.size()[0]-a, concat, dtype=int)[c]
+                m = np.linspace(a, data_u.size()[1]-a, concat, dtype=int)[c]
+                p = np.linspace(a, data_u.size()[2]-a, concat, dtype=int)[c]
+            else:
+                print(f'cubeC argument seems to be wrong! check --help!')
+                sys.exit()
             # cut
             cut_u = data_u[n:n+a,m:m+a,p:p+a]
             cut_v = data_v[n:n+a,m:m+a,p:p+a]
