@@ -225,12 +225,12 @@ def hdf5_loader(path):
         stack_v = data_v[:a,:a,:a]
         stack_w = data_w[:a,:a,:a]
         for c in range(concat):
-            if case == args.cubeC:
+            if args.cubeC == 1:
                 # random numbers, not exceeding domain length
                 n = random.randint(0, data_u.size()[0]-a)
                 m = random.randint(0, data_u.size()[1]-a)
                 p = random.randint(0, data_u.size()[2]-a)
-            elif case == args.cubeC:
+            elif args.cubeC == 2:
                 # monotonical list of numbers, not exceeding domain length -- default
                 n = np.linspace(a, data_u.size()[0]-a, concat, dtype=int)[c]
                 m = np.linspace(a, data_u.size()[1]-a, concat, dtype=int)[c]
