@@ -287,8 +287,8 @@ def run_encoder_decoder_inference(model, src, forecast_window, batch_size, devic
     for _ in range(forecast_window-1):
         dim_a = tgt.shape[1] if batch_first == True else tgt.shape[0]
         dim_b = src.shape[1] if batch_first == True else src.shape[0]
-        tgt_mask = utils.generate_square_subsequent_mask(dim1=dim_a, dim2=dim_a)
-        src_mask = utils.generate_square_subsequent_mask(dim1=dim_a, dim2=dim_b)
+        tgt_mask = generate_square_subsequent_mask(dim1=dim_a, dim2=dim_a)
+        src_mask = generate_square_subsequent_mask(dim1=dim_a, dim2=dim_b)
         
         # Make prediction
         prediction = model(src, tgt, src_mask, tgt_mask) 
@@ -305,8 +305,8 @@ def run_encoder_decoder_inference(model, src, forecast_window, batch_size, devic
     dim_a = tgt.shape[1] if batch_first == True else tgt.shape[0]
     dim_b = src.shape[1] if batch_first == True else src.shape[0]
 
-    tgt_mask = utils.generate_square_subsequent_mask(dim1=dim_a, dim2=dim_a)
-    src_mask = utils.generate_square_subsequent_mask(dim1=dim_a, dim2=dim_b)
+    tgt_mask = generate_square_subsequent_mask(dim1=dim_a, dim2=dim_a)
+    src_mask = generate_square_subsequent_mask(dim1=dim_a, dim2=dim_b)
 
     final_prediction = model(src, tgt, src_mask, tgt_mask)
 
