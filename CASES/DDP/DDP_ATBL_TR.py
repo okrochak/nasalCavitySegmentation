@@ -17,7 +17,7 @@ from torchvision import datasets, transforms
 
 from CustomDistSampler import DistributedCustomSampler
 
-import utils
+#import utils
 
 #from CDM_network import U_Net
 
@@ -48,6 +48,14 @@ def plot_line(inp_img, out_img, data_org):
     plt.legend()
     plt.savefig('TR_CDM_recon_'+data_org+str(random.randint(0,100))+'.pdf')
     plt.close()
+
+def generate_square_subsequent_mask(dim1, dim2):
+    """
+    Generates an upper-triangular matrix of -inf, with zeros on diag.
+    Modified from: 
+    https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+    """
+    return torch.triu(torch.ones(dim1, dim2) * float('-inf'), diagonal=1)
 
 def collate_batch(batch):
     imgs = [item[0].view(int(item[0].shape[0]/88), 88, item[0].shape[1], \
