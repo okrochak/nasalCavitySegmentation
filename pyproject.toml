@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "cython>=3.0.12",
+    "nrrd",
     "numpy>=2.0.2",
     "pydicom>=2.4.4",
     "pynrrd>=1.1.3",
