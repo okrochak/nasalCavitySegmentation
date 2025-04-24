@@ -3,9 +3,9 @@ import os
 import sys
 
 paths = [
-        "./cython0",
-        "./cython2",
-        "./cython3"
+        "./cython0/",
+        "./cython2/",
+        "./cython3/"
         ]
 
 for path in paths:
@@ -24,7 +24,7 @@ from cython_reduce_boundary import reduce_boundary
 
 from scipy import ndimage
 from scipy.ndimage import zoom
-from vtkmodules.util import numpy_support
+# from vtkmodules.util import numpy_support
 
 #from paraview.simple import *
 #from paraview import servermanager as sm
