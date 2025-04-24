@@ -1,0 +1,18 @@
+[project]
+name = "ai4hpc-dev"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cython>=3.0.12",
+    "numpy>=2.0.2",
+    "pydicom>=2.4.4",
+    "scikit-image>=0.24.0",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.13.1",
+    "simpleitk>=2.4.1",
+    "split>=0.4",
+    "tensorflow>=2.19.0",
+    "vtk>=9.4.2",
+]
