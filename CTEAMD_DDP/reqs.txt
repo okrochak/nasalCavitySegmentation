@@ -1,8 +1,0 @@
-torch==1.12.1+rocm5.1.1
-torchvision==0.13.1+rocm5.1.1
-torchaudio==0.12.1+rocm5.1.1
-datasets
-matplotlib
-h5py
-pytorch-nlp
-wheel

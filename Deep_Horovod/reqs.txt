@@ -1,6 +1,0 @@
-Pillow
-pyparsing
-python-dateutil
-matplotlib
-h5py
-pytorch-nlp
