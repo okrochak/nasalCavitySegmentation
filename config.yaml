@@ -1,0 +1,81 @@
+# ----------------------------------------------------------
+# Configuration file for the CT data segmentation pipeline
+# Credit: - Alex Krochak <o.krochak@fz-juelich.de> - FZJ
+# ----------------------------------------------------------
+
+# Boundary extension settings
+boundary:
+  write_ct: True
+  write_filtered: True
+  enable_series_number: True
+  series_number: 5
+  KLI: True
+  seg_ext: True
+  seg_red: False
+  seg_ext_n: 2
+
+# DICOM settings
+dicom:
+  use: True
+  ext_file: "ct_data.nrrd"  # only needed if use_dicom = False
+  ext_RS: 1  # only needed if use_dicom = False
+  ext_RI: 0  # only needed if use_dicom = False
+  VS_X: 0.326171875  # only needed if use_dicom = False
+  VS_Y: 0.326171875  # only needed if use_dicom = False
+  VS_Z: 0.7  # always needed !!!!!
+
+# External egmentation settings
+external:
+  use: False
+  name: "segmentation_initial_plan.nrrd"
+
+# Outlet settings
+outlet:
+  force_cut: False
+  out_c: [69.84113836288452, 96.89016723632812, 7.257740599237669]
+  out_n: [0, 0, -1]      
+  z_dist_norm: 0.2   # Normalized by x bound of nasal cavity (L_x): z_dist_nor=z_dist/L_x=nr_sl_z*voxel_size[2]/L_x
+
+# Directory settings
+path:
+  base: "."  # sys.argv[1]
+  data: "dicom_test"
+  results: "geometry_extraction"
+  voxel_size: "voxel_size.nrrd"
+  output: "CTraw.stl"
+  output_ext: "CTraw_ext.stl"
+  inlet_left: "inlet_left.nrrd"
+  inlet_right: "inlet_right.nrrd"
+  segmentation: "segmentation.nrrd"
+  dice: "dice.nrrd"
+  seg_dice: "seg_dice.nrrd"
+  ct: "ct_data.nrrd"
+  filtered_ct: "ct_data_filtered.nrrd"
+  span: "span.nrrd"
+  seg_ext: "seg_ext.nrrd"
+
+cnnA: # Data for normalization
+  x_std: 1551.049032612434
+  x_mean: -1252.5419529469366
+
+cnnB:
+  # Data for normalization
+  x_std: 1301.7722854480435
+  x_mean: -890.3835213936984
+  # Size of dice
+  x_edge: 80
+  y_edge: 96
+  z_edge: 48
+
+  # Steps from x_min_coord
+  x_back: 8
+  x_front: 72
+  y_back: 48
+  y_front: 48
+  z_back: 28
+  z_front: 20  
+
+cnnC:
+  # Data for normalization
+  x_mean: -1248.3770373938012
+  x_std: 1551.7995144825823
