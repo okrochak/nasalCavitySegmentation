@@ -256,21 +256,14 @@ def main(cfg: DictConfig) -> None:
     for i in range(segmentation_tra.shape[0]):
         for j in range(segmentation_tra.shape[1]):
             for k in range(int(span_down + (span_up - span_down) / 2)):
-
                 # When finding the first segmented voxel, break all loops and store the z position
                 if segmentation_tra[i, j, k] == 1:
-
                     x_min_coord = [i, j, k]
-
                     flag = False
                     break
-
             if flag == False:
-
                 break
-
         if flag == False:
-
             break
 
     print("x_min_coord: ", x_min_coord, flush=True)
@@ -306,29 +299,21 @@ def main(cfg: DictConfig) -> None:
     print("Initializing network for prediction of dice around nostrils...", flush=True)
     # Input
     input_img_2 = Input((cfg.cnnB.x_edge, cfg.cnnB.y_edge, cfg.cnnB.z_edge, 1), name="img")
-
     # Initialize network
     model_2 = get_net_3D(input_img_2, n_filters=32, dropout=0, batchnorm=True)
-
     # Load weights and biases of trained network for segmentation
     model_2.load_weights("./seg_B.h5")
-
     print("Starting prediction of dice around nostrils...", flush=True)
     # Start prediction
     dice = model_2.predict(X_norm_res_2, verbose=1)
-
     # Set pixel quantities to binary values 0 or 1 around threshold 0.5
     dice[dice > 0.5] = 1.0
     dice[dice <= 0.5] = 0
-
     # Remove 1st and 4th dimension of dice
     dice_res = np.zeros((dice.shape[1], dice.shape[2], dice.shape[3]))
-
     dice_res = dice[0, :, :, :, 0]
-
     # Save as .nrrd file
     nrrd.write(os.path.join(cfg.path.results, cfg.path.dice), dice_res)
-
     # Fill segmentation with predicted dice
     if x_min_coord[2] - cfg.cnnB.z_back < 0:
 
@@ -337,9 +322,7 @@ def main(cfg: DictConfig) -> None:
             int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
             0:cfg.cnnB.z_edge,
         ] = dice_res
-
     else:
-
         segmentation_tra[
             int(x_min_coord[0] - cfg.cnnB.x_back) : int(x_min_coord[0] + cfg.cnnB.x_front),
             int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
@@ -348,7 +331,6 @@ def main(cfg: DictConfig) -> None:
 
     # Keep largest island
     segmentation_tra = getLargestCC(segmentation_tra)
-
     # Save as .nrrd file
     nrrd.write(os.path.join(cfg.path.results, cfg.path.seg_dice), segmentation_tra)
 
@@ -361,48 +343,33 @@ def main(cfg: DictConfig) -> None:
     #######################
 
     start_step_iii_1 = time.time()
-
     # Identify last segmented voxel in x-direction,
     # to calculate the x bound of the nasal cavity
     flag = True
-
     # Loop through segmentation
     for i in range(segmentation_tra.shape[0] - 1, 0, -1):
         for j in range(segmentation_tra.shape[1]):
             for k in range(segmentation_tra.shape[2]):
-
                 # When finding the first segmented voxel, break all loops and store the z position
                 if segmentation_tra[i, j, k] == 1:
-
                     flag = False
-
                     x_max_coord = [i, j, k]
-
                     break
-
             if flag == False:
-
                 break
-
         if flag == False:
-
             break
-
     # x bound of nasal cavity
     L_x = (x_max_coord[0] - x_min_coord[0]) * voxel_size[0]
-
     # Nr of slices in each z-direction to predict thin inlet layers
     nr_sl_z = int((cfg.outlet.z_dist_norm / voxel_size[2]) * L_x)
-
     # Initialize network for left inlet
     print("Initializing network for inlets...", flush=True)
     input_img_3 = Input((512, 512, 2), name="img")
     model_3 = get_net_2D(input_img_3, out_layer=2, n_filters=32, dropout=0, batchnorm=True)
     # model.summary()
-
     # Load weights and biases of trained network for left inlet
     model_3.load_weights("./seg_C.h5")
-
     # Reshape and normalize data
     X_norm_res_3 = np.empty((2 * nr_sl_z, 512, 512, 2))
 
@@ -410,16 +377,11 @@ def main(cfg: DictConfig) -> None:
 
     # Check if x_min_coord is to close to the min_z of the CT data
     if (x_min_coord[2] - nr_sl_z) < 0:
-
         for i in range(2 * nr_sl_z):
-
             X_norm_res_3[i, :, :, 0] = (X[:, :, i] - cfg.cnnC.x_mean) / cfg.cnnC.x_std
             X_norm_res_3[i, :, :, 1] = segmentation_tra[:, :, i]
-
     else:
-
         for i in range(x_min_coord[2] - nr_sl_z, x_min_coord[2] + nr_sl_z):
-
             X_norm_res_3[i + nr_sl_z - x_min_coord[2], :, :, 0] = (
                 X[:, :, i] - cfg.cnnC.x_mean
             ) / cfg.cnnC.x_std
@@ -449,17 +411,13 @@ def main(cfg: DictConfig) -> None:
 
         inlet_left_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_left_full[:, :, 0 : 2 * nr_sl_z] = inlet_left_tra
-
         inlet_right_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_right_full[:, :, 0 : 2 * nr_sl_z] = inlet_right_tra
-
     else:
-
         inlet_left_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_left_full[:, :, x_min_coord[2] - nr_sl_z : x_min_coord[2] + nr_sl_z] = (
             inlet_left_tra
         )
-
         inlet_right_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_right_full[:, :, x_min_coord[2] - nr_sl_z : x_min_coord[2] + nr_sl_z] = (
             inlet_right_tra
@@ -484,24 +442,22 @@ def main(cfg: DictConfig) -> None:
 
     # Use external segmentation
     if cfg.external.use == True:
-
         segmentation_tra, header = nrrd.read(os.path.join(cfg.path.results, cfg.external.name))
 
-
-    del segmentation
-    del segmentation_res
-    del X
-    del X_norm_1
-    del X_norm_res_1
-    del X_norm_2
-    del X_norm_res_2
-    del X_norm_res_3
-    del inlet_left
-    del inlet_left_tra
-    del inlet_left_full
-    del inlet_right
-    del inlet_right_tra
-    del inlet_right_full
+    # del segmentation
+    # del segmentation_res
+    # del X
+    # del X_norm_1
+    # del X_norm_res_1
+    # del X_norm_2
+    # del X_norm_res_2
+    # del X_norm_res_3
+    # del inlet_left
+    # del inlet_left_tra
+    # del inlet_left_full
+    # del inlet_right
+    # del inlet_right_tra
+    # del inlet_right_full
 
     # Initialize 2 voxel layer array
     c = (segmentation_tra * -100000) + 50000
