@@ -14,7 +14,6 @@ import numpy as np
 # from tensorflow.keras.optimizers import Adam
 # from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.keras.models import Model, load_model
-from skimage.measure import label
 # from skimage.transform import resize
 # from sklearn.model_selection import train_test_split
 
@@ -176,15 +175,3 @@ def get_net_3D(input_img, n_filters, dropout, batchnorm=True):
 
     model = Model(inputs=[input_img], outputs=[outputs])
     return model
-
-
-# Function for "keep largest island"
-def getLargestCC(segmentation):
-    labels = label(segmentation)
-    unique, counts = np.unique(labels, return_counts=True)
-    # the 0 label is by default background so take the rest
-    list_seg = list(zip(unique, counts))[1:]
-    largest = max(list_seg, key=lambda x: x[1])[0]
-    labels_max = (labels == largest).astype(int)
-    return labels_max
-

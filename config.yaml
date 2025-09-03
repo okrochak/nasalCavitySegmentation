@@ -5,11 +5,14 @@
 
 # Boundary extension settings
 boundary:
-  write_ct: True
-  write_filtered: True
-  enable_series_number: True
-  series_number: 5
-  KLI: True
+  # put as a separate dict
+  write_ct: True # write to .nrrd file 
+  write_filtered: True # write ConvANDgadFilter to .nrrd file
+  # 
+
+  enable_series_number: True  # move to DICOM setting 
+  series_number: 5 # move to DICOM setting
+  KLI: True 
   seg_ext: True
   seg_red: False
   seg_ext_n: 2
@@ -31,9 +34,9 @@ external:
 
 # Outlet settings
 outlet:
-  force_cut: False
+  force_cut: True
   out_c: [69.84113836288452, 96.89016723632812, 7.257740599237669]
-  out_n: [0, 0, -1]      
+  out_n: [0, 0, -1.0]      
   z_dist_norm: 0.2   # Normalized by x bound of nasal cavity (L_x): z_dist_nor=z_dist/L_x=nr_sl_z*voxel_size[2]/L_x
 
 # Directory settings

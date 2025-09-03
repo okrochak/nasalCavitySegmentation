@@ -7,13 +7,13 @@ import tensorflow as tf
 import vtk
 import nrrd
 import time
+import trimesh 
 
 from scipy import ndimage
 from scipy.ndimage import zoom
 
-from tensorflow.keras.layers import (
-    Input
-)
+from tensorflow.keras.layers import Input
+from skimage.measure import label
 
 from cython0.cython_voxel_layer import voxel_layer
 from cython2.cython_extend_boundary import extend_boundary
@@ -22,11 +22,20 @@ from cython3.cython_reduce_boundary import reduce_boundary
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-from conv import get_net_2D, get_net_3D, conv2d_block, conv3d_block, getLargestCC
+from conv import get_net_2D, get_net_3D, conv2d_block, conv3d_block
+
+# Function for "keep largest island"
+def getLargestCC(segmentation):
+    labels = label(segmentation)
+    unique, counts = np.unique(labels, return_counts=True)
+    # the 0 label is by default background so take the rest
+    list_seg = list(zip(unique, counts))[1:]
+    largest = max(list_seg, key=lambda x: x[1])[0]
+    labels_max = (labels == largest).astype(int)
+    return labels_max
 
 @hydra.main(version_base=None, config_path=os.getcwd(), config_name="config.yaml")
 def main(cfg: DictConfig) -> None:
-    print(OmegaConf.to_yaml(cfg))
     # Start of segmentaion
     print("#" * 30)
     print("Segmentation")
@@ -140,6 +149,7 @@ def main(cfg: DictConfig) -> None:
         RS = cfg.dicom.ext_RS
         RI = cfg.dicom.ext_RI
 
+    os.makedirs(cfg.path.results, exist_ok=True)
     nrrd.write(os.path.join(cfg.path.results, cfg.path.voxel_size), voxel_size)
 
     img3d = img3d * RS + RI
@@ -444,21 +454,6 @@ def main(cfg: DictConfig) -> None:
     if cfg.external.use == True:
         segmentation_tra, header = nrrd.read(os.path.join(cfg.path.results, cfg.external.name))
 
-    # del segmentation
-    # del segmentation_res
-    # del X
-    # del X_norm_1
-    # del X_norm_res_1
-    # del X_norm_2
-    # del X_norm_res_2
-    # del X_norm_res_3
-    # del inlet_left
-    # del inlet_left_tra
-    # del inlet_left_full
-    # del inlet_right
-    # del inlet_right_tra
-    # del inlet_right_full
-
     # Initialize 2 voxel layer array
     c = (segmentation_tra * -100000) + 50000
     # Convert datatype to match with Cython code
@@ -489,6 +484,12 @@ def main(cfg: DictConfig) -> None:
 
     # Apply marching cubes algorithm
     marching = vtk.vtkMarchingCubes()
+
+    ## TODO: give a flag to write only internal STL or both:
+    
+    # newImageData = CONV_and_GAD_filter.astype(float) 
+
+
     marching.SetInputData(newImageData)
     marching.SetValue(0, -550)
     marching.Update()
@@ -510,23 +511,19 @@ def main(cfg: DictConfig) -> None:
 
     if cfg.outlet.force_cut == True:
 
-        cT_stl = STLReader(FileNames=[os.path.join(cfg.path.results, cfg.path.output)])
-        cT_stl.UpdatePipeline()
+        mesh = trimesh.load_mesh(os.path.join(cfg.path.results, cfg.path.output), force='mesh')
+    
+        # Define clipping plane
+        origin = np.array(cfg.outlet.out_c)
+        normal = np.array(cfg.outlet.out_n)
+        normal /= -np.linalg.norm(normal)            
+            
+        clipped = mesh.slice_plane(plane_origin=origin, plane_normal=normal)
 
-        clip = Clip(Input=cT_stl)
-        clip.ClipType = "Plane"
-        clip.Scalars = ["CELLS", "STLSolidLabeling"]
+        clipped.export(os.path.join(cfg.path.results, cfg.path.output), file_type='stl')
 
-        clip.ClipType.Origin = [force_OUT_c[0], force_OUT_c[1], force_OUT_c[2]]
-        clip.ClipType.Normal = [force_OUT_n[0], force_OUT_n[1], force_OUT_n[2]]
-        clip.Invert = 1
+    print("Segmentation extension done.\n")
 
-        extractSurface = ExtractSurface(Input=clip)
-        triangulate = Triangulate(Input=extractSurface)
-
-        SaveData(os.path.join(cfg.path.results, cfg.path.output), proxy=triangulate, FileType="Ascii")
-
-    print("Segmentation done.\n")
 
     end_step_ii = time.time()
     print("step (ii)")
@@ -608,31 +605,9 @@ def main(cfg: DictConfig) -> None:
         writer.SetFileName(os.path.join(cfg.path.results, cfg.path.output_ext))
         writer.Write()
 
-        if cfg.outlet.force_cut == True:
-
-            cT_stl = STLReader(FileNames=[os.path.join(cfg.path.results, cfg.path.output_ext)])
-            cT_stl.UpdatePipeline()
-
-            clip = Clip(Input=cT_stl)
-            clip.ClipType = "Plane"
-            clip.Scalars = ["CELLS", "STLSolidLabeling"]
-
-            clip.ClipType.Origin = cfg.outlet.out_c
-            clip.ClipType.Normal = cfg.outlet.out_n
-            clip.Invert = 1
-
-            extractSurface = ExtractSurface(Input=clip)
-            triangulate = Triangulate(Input=extractSurface)
-
-            SaveData(
-                os.path.join(cfg.path.results, cfg.path.output_ext),
-                proxy=triangulate,
-                FileType="Ascii",
-            )
-
-        print("Segmentation extension done.\n")
 
 
 if __name__ == "__main__":
     main()
+
 
