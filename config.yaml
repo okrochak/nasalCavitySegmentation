@@ -3,15 +3,16 @@
 # Credit: - Alex Krochak <o.krochak@fz-juelich.de> - FZJ
 # ----------------------------------------------------------
 
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
 # Boundary extension settings
 boundary:
   # put as a separate dict
   write_ct: True # write to .nrrd file 
   write_filtered: True # write ConvANDgadFilter to .nrrd file
-  # 
-
-  enable_series_number: True  # move to DICOM setting 
-  series_number: 5 # move to DICOM setting
   KLI: True 
   seg_ext: True
   seg_red: False
@@ -19,6 +20,8 @@ boundary:
 
 # DICOM settings
 dicom:
+  enable_series_number: True  # only parse DICOM files from a given series
+  series_number: 5 
   use: True
   ext_file: "ct_data.nrrd"  # only needed if use_dicom = False
   ext_RS: 1  # only needed if use_dicom = False
@@ -42,8 +45,8 @@ outlet:
 # Directory settings
 path:
   base: "."  # sys.argv[1]
-  data: "dicom_test"
-  results: "geometry_extraction"
+  data: "data/input/dicom_test"
+  results: "data/output/"
   voxel_size: "voxel_size.nrrd"
   output: "CTraw.stl"
   output_ext: "CTraw_ext.stl"
@@ -58,10 +61,12 @@ path:
   seg_ext: "seg_ext.nrrd"
 
 cnnA: # Data for normalization
+  path: 'cnn/seg_A.h5'
   x_std: 1551.049032612434
   x_mean: -1252.5419529469366
 
 cnnB:
+  path: 'cnn/seg_B.h5'
   # Data for normalization
   x_std: 1301.7722854480435
   x_mean: -890.3835213936984
@@ -79,6 +84,7 @@ cnnB:
   z_front: 20  
 
 cnnC:
+  path: 'cnn/seg_C.h5'
   # Data for normalization
   x_mean: -1248.3770373938012
   x_std: 1551.7995144825823

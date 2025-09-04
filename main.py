@@ -15,6 +15,7 @@ from scipy.ndimage import zoom
 from tensorflow.keras.layers import Input
 from skimage.measure import label
 
+sys.path.append("cython")
 from cython0.cython_voxel_layer import voxel_layer
 from cython2.cython_extend_boundary import extend_boundary
 from cython3.cython_reduce_boundary import reduce_boundary
@@ -22,7 +23,7 @@ from cython3.cython_reduce_boundary import reduce_boundary
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-from conv import get_net_2D, get_net_3D, conv2d_block, conv3d_block
+from cnn.conv import get_net_2D, get_net_3D, conv2d_block, conv3d_block
 
 # Function for "keep largest island"
 def getLargestCC(segmentation):
@@ -54,9 +55,9 @@ def main(cfg: DictConfig) -> None:
             if os.path.isfile(file_path):
                 try:
                     ds = pydicom.filereader.dcmread(file_path)
-                    if cfg.boundary.enable_series_number:
+                    if cfg.dicom.enable_series_number:
                         # print("series number: ", ds.SeriesNumber, flush=True)
-                        if ds.SeriesNumber == cfg.boundary.series_number:  # and ds.SeriesTime=='085446':
+                        if ds.SeriesNumber == cfg.dicom.series_number:  # and ds.SeriesTime=='085446':
                             files.append(pydicom.dcmread(file_path))
                             # files.append(dicom.read_file(""+str(file_path)+""))
                     else:
@@ -200,7 +201,7 @@ def main(cfg: DictConfig) -> None:
     # model.summary()
 
     # Load weights and biases of trained network for segmentation
-    model_1.load_weights("./seg_A.h5")
+    model_1.load_weights(cfg.cnnA.path)
 
     print("Starting segmentation...", flush=True)
     # Start segmentation
@@ -312,7 +313,7 @@ def main(cfg: DictConfig) -> None:
     # Initialize network
     model_2 = get_net_3D(input_img_2, n_filters=32, dropout=0, batchnorm=True)
     # Load weights and biases of trained network for segmentation
-    model_2.load_weights("./seg_B.h5")
+    model_2.load_weights(cfg.cnnB.path)
     print("Starting prediction of dice around nostrils...", flush=True)
     # Start prediction
     dice = model_2.predict(X_norm_res_2, verbose=1)
@@ -379,7 +380,7 @@ def main(cfg: DictConfig) -> None:
     model_3 = get_net_2D(input_img_3, out_layer=2, n_filters=32, dropout=0, batchnorm=True)
     # model.summary()
     # Load weights and biases of trained network for left inlet
-    model_3.load_weights("./seg_C.h5")
+    model_3.load_weights(cfg.cnnC.path)
     # Reshape and normalize data
     X_norm_res_3 = np.empty((2 * nr_sl_z, 512, 512, 2))
 

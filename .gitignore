@@ -1,3 +1,5 @@
 .venv
 .vscode
 .python-version
+main.log
+data
