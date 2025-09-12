@@ -1,4 +1,3 @@
-
 from tensorflow.keras.layers import (
     BatchNormalization,
     Activation,
@@ -11,11 +10,15 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.layers import Conv2D, Conv2DTranspose, Conv3D, Conv3DTranspose
 from tensorflow.keras.layers import add
 import numpy as np
+
 # from tensorflow.keras.optimizers import Adam
 # from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.keras.models import Model, load_model
+from skimage.measure import label
+
 # from skimage.transform import resize
 # from sklearn.model_selection import train_test_split
+
 
 # Define functions necessary for the segmentation
 # Function for 2D convolutional block inside network architecture
@@ -174,4 +177,15 @@ def get_net_3D(input_img, n_filters, dropout, batchnorm=True):
     outputs = Conv3D(1, (1, 1, 1), activation="sigmoid")(c9)
 
     model = Model(inputs=[input_img], outputs=[outputs])
+
     return model
+
+# Function for "keep largest island"
+def getLargestCC(segmentation):
+    labels = label(segmentation)
+    unique, counts = np.unique(labels, return_counts=True)
+    # the 0 label is by default background so take the rest
+    list_seg = list(zip(unique, counts))[1:]
+    largest = max(list_seg, key=lambda x: x[1])[0]
+    labels_max = (labels == largest).astype(int)
+    return labels_max

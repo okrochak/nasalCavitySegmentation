@@ -38,7 +38,7 @@ external:
 # Outlet settings
 outlet:
   force_cut: True
-  out_c: [69.84113836288452, 96.89016723632812, 7.257740599237669]
+  out_c: [69.84113836288452, 96.89016723632812, 7.257740599237669] # outlet position
   out_n: [0, 0, -1.0]      
   z_dist_norm: 0.2   # Normalized by x bound of nasal cavity (L_x): z_dist_nor=z_dist/L_x=nr_sl_z*voxel_size[2]/L_x
 

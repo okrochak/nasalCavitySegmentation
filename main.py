@@ -7,13 +7,12 @@ import tensorflow as tf
 import vtk
 import nrrd
 import time
-import trimesh 
+import trimesh
 
 from scipy import ndimage
 from scipy.ndimage import zoom
 
 from tensorflow.keras.layers import Input
-from skimage.measure import label
 
 sys.path.append("cython")
 from cython0.cython_voxel_layer import voxel_layer
@@ -23,17 +22,7 @@ from cython3.cython_reduce_boundary import reduce_boundary
 from omegaconf import DictConfig, OmegaConf
 import hydra
 
-from cnn.conv import get_net_2D, get_net_3D, conv2d_block, conv3d_block
-
-# Function for "keep largest island"
-def getLargestCC(segmentation):
-    labels = label(segmentation)
-    unique, counts = np.unique(labels, return_counts=True)
-    # the 0 label is by default background so take the rest
-    list_seg = list(zip(unique, counts))[1:]
-    largest = max(list_seg, key=lambda x: x[1])[0]
-    labels_max = (labels == largest).astype(int)
-    return labels_max
+from cnn.conv import get_net_2D, get_net_3D, getLargestCC
 
 @hydra.main(version_base=None, config_path=os.getcwd(), config_name="config.yaml")
 def main(cfg: DictConfig) -> None:
@@ -44,8 +33,9 @@ def main(cfg: DictConfig) -> None:
 
     start_step_i = time.time()
 
-    if cfg.dicom.use == True:
+    '''1. Read DICOM Data and sort the CT scans/slices'''
 
+    if cfg.dicom.use == True:
         # Load the DICOM files
         print("Loading DICOM files...", flush=True)
         files = []
@@ -57,9 +47,10 @@ def main(cfg: DictConfig) -> None:
                     ds = pydicom.filereader.dcmread(file_path)
                     if cfg.dicom.enable_series_number:
                         # print("series number: ", ds.SeriesNumber, flush=True)
-                        if ds.SeriesNumber == cfg.dicom.series_number:  # and ds.SeriesTime=='085446':
+                        if (
+                            ds.SeriesNumber == cfg.dicom.series_number
+                        ):  # and ds.SeriesTime=='085446':
                             files.append(pydicom.dcmread(file_path))
-                            # files.append(dicom.read_file(""+str(file_path)+""))
                     else:
                         files.append(pydicom.dcmread(file_path))
                 except pydicom.errors.InvalidDicomError:
@@ -83,12 +74,9 @@ def main(cfg: DictConfig) -> None:
         # "Slice thickness" and "Spacing between slices”.
         # We need “Spacing between slices” for creating the .stl later.
         # print("Spacing between slices: %f" % slices[0].SpacingBetweenSlices, flush=True)
-        print(
-            "Pixel spacing (row, col): ({}, {})".format(
+        print("Pixel spacing (row, col): ({}, {})".format(
                 slices[0].PixelSpacing[0], slices[0].PixelSpacing[1]
-            ),
-            flush=True,
-        )
+            ),flush=True)
 
         # Write pixel spacing and spacing between slices
         voxel_size = np.zeros((3))
@@ -112,14 +100,11 @@ def main(cfg: DictConfig) -> None:
         if slices[0].pixel_array.shape[0] != 512:
             x_res = np.round((512 / slices[0].pixel_array.shape[0]), decimals=3)
             img3d = zoom(img3d, (x_res, 1, 1))
-
             voxel_size[0] = (voxel_size[0] / slices[0].pixel_array.shape[0]) * 512
-
         # Y axis
         if slices[0].pixel_array.shape[1] != 512:
             y_res = np.round((512 / slices[0].pixel_array.shape[1]), decimals=3)
             img3d = zoom(img3d, (1, y_res, 1))
-
             voxel_size[1] = (voxel_size[1] / slices[0].pixel_array.shape[1]) * 512
 
         # Swap y-axis, to match with CT data
@@ -135,7 +120,6 @@ def main(cfg: DictConfig) -> None:
         print("\nRS: ", RS, flush=True)
         print("\nRI: ", RI, flush=True)
 
-
     else:
 
         # read external dicom
@@ -144,7 +128,6 @@ def main(cfg: DictConfig) -> None:
         voxel_size = np.zeros((3))
         voxel_size[0] = float(cfg.dicom.VS_X)
         voxel_size[1] = float(cfg.dicom.VS_Y)
-        # voxel_size[2]=float(slices[0].SliceThickness)
         voxel_size[2] = float(cfg.dicom.VS_Z)
 
         RS = cfg.dicom.ext_RS
@@ -154,6 +137,8 @@ def main(cfg: DictConfig) -> None:
     nrrd.write(os.path.join(cfg.path.results, cfg.path.voxel_size), voxel_size)
 
     img3d = img3d * RS + RI
+
+    '''2. Initialize network set-up'''
 
     print("\nSetting up network...", flush=True)
     # Kernel for convolution filter
@@ -172,7 +157,6 @@ def main(cfg: DictConfig) -> None:
         filtered_slice = GAD.Execute(slice_GAD)
         CONV_and_GAD_filter[i, :, :] = sitk.GetArrayFromImage(filtered_slice)
 
-
     # Write out raw CT data as array
     if cfg.boundary.write_ct == True:
         nrrd.write(os.path.join(cfg.path.results, cfg.path.ct), img3d)
@@ -180,10 +164,7 @@ def main(cfg: DictConfig) -> None:
     if cfg.boundary.write_filtered == True:
         nrrd.write(os.path.join(cfg.path.results, cfg.path.filtered_ct), CONV_and_GAD_filter)
 
-    #######################
-    # CNN-A
-    #######################
-
+    '''3. CNN-A'''
     # Define input
     X = CONV_and_GAD_filter
     # Normalize input
@@ -223,16 +204,13 @@ def main(cfg: DictConfig) -> None:
     # Save as .nrrd file
     nrrd.write(os.path.join(cfg.path.results, cfg.path.segmentation), segmentation_tra)
 
-    #######################
-    # CNN-B
-    #######################
+    '''3. CNN-B'''
 
-    # Identify coordinates of first segmented voxel in x-direction
-    # Based on that, nostril dice is refined and thin inlet layers are predicted
-    # +/- a certain number of slices in z-direction around that point
-
-    # Loop through the first 1/3 of the segmentation in x-direction
-    # to find the spanwidth in z-direction between frontal sinuses and nostrils
+    '''Identify coordinates of first segmented voxel in x-direction
+    Based on that, nostril dice is refined and thin inlet layers are predicted
+    +/- a certain number of slices in z-direction around that point
+    Loop through the first 1/3 of the segmentation in x-direction
+    to find the spanwidth in z-direction between frontal sinuses and nostrils'''
 
     span_up = 0
     span_down = segmentation_tra.shape[2]
@@ -241,16 +219,11 @@ def main(cfg: DictConfig) -> None:
     for i in range(int(segmentation_tra.shape[0] / 3)):
         for j in range(segmentation_tra.shape[1]):
             for k in range(segmentation_tra.shape[2]):
-
                 # Update span_up and span_down
                 if segmentation_tra[i, j, k] == 1 and k > span_up:
-
                     span_up = k
-
                 if segmentation_tra[i, j, k] == 1 and k < span_down:
-
                     span_down = k
-
     print("span_up: ", span_up)
     print("span_down: ", span_down)
 
@@ -269,7 +242,7 @@ def main(cfg: DictConfig) -> None:
             for k in range(int(span_down + (span_up - span_down) / 2)):
                 # When finding the first segmented voxel, break all loops and store the z position
                 if segmentation_tra[i, j, k] == 1:
-                    x_min_coord = [i, j, k]
+                    min_coord = [i, j, k]
                     flag = False
                     break
             if flag == False:
@@ -277,39 +250,34 @@ def main(cfg: DictConfig) -> None:
         if flag == False:
             break
 
-    print("x_min_coord: ", x_min_coord, flush=True)
+    print("min_coord: ", min_coord, flush=True)
 
     # Dice from filtered CT data: dice_X
     # Check if dice exceeds z-bounds of CT data
-    if x_min_coord[2] - cfg.cnnB.z_back < 0:
-
+    if min_coord[2] - cfg.cnnB.z_back < 0:
         dice_X = X[
-            int(x_min_coord[0] - cfg.cnnB.x_back) : int(x_min_coord[0] + cfg.cnnB.x_front),
-            int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
-            0:cfg.cnnB.z_edge,
-        ]
-
+            int(min_coord[0] - cfg.cnnB.x_back) : int(min_coord[0] + cfg.cnnB.x_front),
+            int(min_coord[1] - cfg.cnnB.y_back) : int(min_coord[1] + cfg.cnnB.y_front),
+            0 : cfg.cnnB.z_edge]
     else:
-
         dice_X = X[
-            int(x_min_coord[0] - cfg.cnnB.x_back) : int(x_min_coord[0] + cfg.cnnB.x_front),
-            int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
-            int(x_min_coord[2] - cfg.cnnB.z_back) : int(x_min_coord[2] + cfg.cnnB.z_front),
-        ]
-
+            int(min_coord[0] - cfg.cnnB.x_back) : int(min_coord[0] + cfg.cnnB.x_front),
+            int(min_coord[1] - cfg.cnnB.y_back) : int(min_coord[1] + cfg.cnnB.y_front),
+            int(min_coord[2] - cfg.cnnB.z_back) : int(min_coord[2] + cfg.cnnB.z_front)]
 
     # Normalize input
     X_norm_2 = (dice_X - cfg.cnnB.x_mean) / cfg.cnnB.x_std
 
     # Reshape test data to match with code later
     X_norm_res_2 = np.zeros((1, X_norm_2.shape[0], X_norm_2.shape[1], X_norm_2.shape[2], 1))
-
     X_norm_res_2[0, :, :, :, 0] = X_norm_2[:, :, :]
 
     # Initialize network for dice
     print("Initializing network for prediction of dice around nostrils...", flush=True)
     # Input
-    input_img_2 = Input((cfg.cnnB.x_edge, cfg.cnnB.y_edge, cfg.cnnB.z_edge, 1), name="img")
+    input_img_2 = Input(
+        (cfg.cnnB.x_edge, cfg.cnnB.y_edge, cfg.cnnB.z_edge, 1), name="img"
+    )
     # Initialize network
     model_2 = get_net_3D(input_img_2, n_filters=32, dropout=0, batchnorm=True)
     # Load weights and biases of trained network for segmentation
@@ -326,19 +294,16 @@ def main(cfg: DictConfig) -> None:
     # Save as .nrrd file
     nrrd.write(os.path.join(cfg.path.results, cfg.path.dice), dice_res)
     # Fill segmentation with predicted dice
-    if x_min_coord[2] - cfg.cnnB.z_back < 0:
-
-        segmentation_tra[
-            int(x_min_coord[0] - cfg.cnnB.x_back) : int(x_min_coord[0] + cfg.cnnB.x_front),
-            int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
-            0:cfg.cnnB.z_edge,
-        ] = dice_res
+    if min_coord[2] - cfg.cnnB.z_back < 0:
+        dice_res = segmentation_tra[
+            int(min_coord[0] - cfg.cnnB.x_back) : int(min_coord[0] + cfg.cnnB.x_front),
+            int(min_coord[1] - cfg.cnnB.y_back) : int(min_coord[1] + cfg.cnnB.y_front),
+            0 : cfg.cnnB.z_edge]
     else:
-        segmentation_tra[
-            int(x_min_coord[0] - cfg.cnnB.x_back) : int(x_min_coord[0] + cfg.cnnB.x_front),
-            int(x_min_coord[1] - cfg.cnnB.y_back) : int(x_min_coord[1] + cfg.cnnB.y_front),
-            int(x_min_coord[2] - cfg.cnnB.z_back) : int(x_min_coord[2] + cfg.cnnB.z_front),
-        ] = dice_res
+        dice_res = segmentation_tra[
+            int(min_coord[0] - cfg.cnnB.x_back) : int(min_coord[0] + cfg.cnnB.x_front),
+            int(min_coord[1] - cfg.cnnB.y_back) : int(min_coord[1] + cfg.cnnB.y_front),
+            int(min_coord[2] - cfg.cnnB.z_back) : int(min_coord[2] + cfg.cnnB.z_front)] 
 
     # Keep largest island
     segmentation_tra = getLargestCC(segmentation_tra)
@@ -371,13 +336,15 @@ def main(cfg: DictConfig) -> None:
         if flag == False:
             break
     # x bound of nasal cavity
-    L_x = (x_max_coord[0] - x_min_coord[0]) * voxel_size[0]
+    L_x = (x_max_coord[0] - min_coord[0]) * voxel_size[0]
     # Nr of slices in each z-direction to predict thin inlet layers
     nr_sl_z = int((cfg.outlet.z_dist_norm / voxel_size[2]) * L_x)
     # Initialize network for left inlet
     print("Initializing network for inlets...", flush=True)
     input_img_3 = Input((512, 512, 2), name="img")
-    model_3 = get_net_2D(input_img_3, out_layer=2, n_filters=32, dropout=0, batchnorm=True)
+    model_3 = get_net_2D(
+        input_img_3, out_layer=2, n_filters=32, dropout=0, batchnorm=True
+    )
     # model.summary()
     # Load weights and biases of trained network for left inlet
     model_3.load_weights(cfg.cnnC.path)
@@ -386,17 +353,17 @@ def main(cfg: DictConfig) -> None:
 
     print("nr_sl_z: ", nr_sl_z, flush=True)
 
-    # Check if x_min_coord is to close to the min_z of the CT data
-    if (x_min_coord[2] - nr_sl_z) < 0:
+    # Check if min_coord is to close to the min_z of the CT data
+    if (min_coord[2] - nr_sl_z) < 0:
         for i in range(2 * nr_sl_z):
             X_norm_res_3[i, :, :, 0] = (X[:, :, i] - cfg.cnnC.x_mean) / cfg.cnnC.x_std
             X_norm_res_3[i, :, :, 1] = segmentation_tra[:, :, i]
     else:
-        for i in range(x_min_coord[2] - nr_sl_z, x_min_coord[2] + nr_sl_z):
-            X_norm_res_3[i + nr_sl_z - x_min_coord[2], :, :, 0] = (
-                X[:, :, i] - cfg.cnnC.x_mean
-            ) / cfg.cnnC.x_std
-            X_norm_res_3[i + nr_sl_z - x_min_coord[2], :, :, 1] = segmentation_tra[:, :, i]
+        for i in range(min_coord[2] - nr_sl_z, min_coord[2] + nr_sl_z):
+            X_norm_res_3[i + nr_sl_z - min_coord[2], :, :, 0] = \
+            (X[:, :, i] - cfg.cnnC.x_mean) / cfg.cnnC.x_std
+
+            X_norm_res_3[i + nr_sl_z - min_coord[2], :, :, 1] = segmentation_tra[:, :, i]
 
     print("Starting prediction of inlets...", flush=True)
     # Start prediction of left inlet
@@ -418,22 +385,18 @@ def main(cfg: DictConfig) -> None:
     inlet_right_tra = np.transpose(inlet_right, (1, 2, 0))
 
     # Fill complete array
-    if (x_min_coord[2] - nr_sl_z) < 0:
-
+    if (min_coord[2] - nr_sl_z) < 0:
         inlet_left_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_left_full[:, :, 0 : 2 * nr_sl_z] = inlet_left_tra
         inlet_right_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
         inlet_right_full[:, :, 0 : 2 * nr_sl_z] = inlet_right_tra
     else:
         inlet_left_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
-        inlet_left_full[:, :, x_min_coord[2] - nr_sl_z : x_min_coord[2] + nr_sl_z] = (
-            inlet_left_tra
-        )
+        inlet_left_full[:, :, min_coord[2] - nr_sl_z : min_coord[2] + nr_sl_z] = inlet_left_tra
+        
         inlet_right_full = np.zeros((X.shape[0], X.shape[1], X.shape[2]))
-        inlet_right_full[:, :, x_min_coord[2] - nr_sl_z : x_min_coord[2] + nr_sl_z] = (
-            inlet_right_tra
-        )
-
+        inlet_right_full[:, :, min_coord[2] - nr_sl_z : min_coord[2] + nr_sl_z] = inlet_right_tra
+        
     # Keep largest island
     inlet_left_full = getLargestCC(inlet_left_full)
     inlet_right_full = getLargestCC(inlet_right_full)
@@ -453,7 +416,9 @@ def main(cfg: DictConfig) -> None:
 
     # Use external segmentation
     if cfg.external.use == True:
-        segmentation_tra, header = nrrd.read(os.path.join(cfg.path.results, cfg.external.name))
+        segmentation_tra, header = nrrd.read(
+            os.path.join(cfg.path.results, cfg.external.name)
+        )
 
     # Initialize 2 voxel layer array
     c = (segmentation_tra * -100000) + 50000
@@ -487,9 +452,8 @@ def main(cfg: DictConfig) -> None:
     marching = vtk.vtkMarchingCubes()
 
     ## TODO: give a flag to write only internal STL or both:
-    
-    # newImageData = CONV_and_GAD_filter.astype(float) 
 
+    # newImageData = CONV_and_GAD_filter.astype(float)
 
     marching.SetInputData(newImageData)
     marching.SetValue(0, -550)
@@ -512,19 +476,16 @@ def main(cfg: DictConfig) -> None:
 
     if cfg.outlet.force_cut == True:
 
-        mesh = trimesh.load_mesh(os.path.join(cfg.path.results, cfg.path.output), force='mesh')
-    
+        mesh = trimesh.load_mesh(os.path.join(cfg.path.results, cfg.path.output), force="mesh")
+
         # Define clipping plane
         origin = np.array(cfg.outlet.out_c)
         normal = np.array(cfg.outlet.out_n)
-        normal /= -np.linalg.norm(normal)            
-            
+        normal /= -np.linalg.norm(normal)
         clipped = mesh.slice_plane(plane_origin=origin, plane_normal=normal)
-
-        clipped.export(os.path.join(cfg.path.results, cfg.path.output), file_type='stl')
+        clipped.export(os.path.join(cfg.path.results, cfg.path.output), file_type="stl")
 
     print("Segmentation extension done.\n")
-
 
     end_step_ii = time.time()
     print("step (ii)")
@@ -566,9 +527,9 @@ def main(cfg: DictConfig) -> None:
         # Generate 2 voxel layer array
         c_out = voxel_layer(b_input, a_input, c_input)
 
-        # Create a new vtk ImageData that contains the previously generated array.
-        # Here, it is important to use pixel dimensions and pixel spacing
-        # from the original CT image (!).
+        '''Create a new vtk ImageData that contains the previously generated array.
+        Here, it is important to use pixel dimensions and pixel spacing
+        from the original CT image (!). '''
         newImageData = vtk.vtkImageData()
         newImageData.SetDimensions(c.shape[0], c.shape[1], c.shape[2])
         newImageData.SetSpacing(
@@ -583,7 +544,9 @@ def main(cfg: DictConfig) -> None:
         for k in range(c.shape[2]):
             for j in range(c.shape[1]):
                 for i in range(c.shape[0]):
-                    newImageData.SetScalarComponentFromDouble(i, j, k, 0, c_out[i, j, k])
+                    newImageData.SetScalarComponentFromDouble(
+                        i, j, k, 0, c_out[i, j, k]
+                    )
 
         # Apply marching cubes algorithm
         marching = vtk.vtkMarchingCubes()
@@ -606,9 +569,5 @@ def main(cfg: DictConfig) -> None:
         writer.SetFileName(os.path.join(cfg.path.results, cfg.path.output_ext))
         writer.Write()
 
-
-
 if __name__ == "__main__":
     main()
-
-
