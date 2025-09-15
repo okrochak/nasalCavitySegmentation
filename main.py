@@ -51,7 +51,7 @@ def main(config: DictConfig) -> None:
     t5 = time.time()
 
     '''4. Final step'''
-    final_step(config=config, X=X, segmentation=segmentation, min_coord=min_coord, voxel_size=voxel_size)
+    final_step(config=config, X=X, segmentation=segmentation, voxel_size=voxel_size)
 
     t6 = time.time()
     print("step (ii)")

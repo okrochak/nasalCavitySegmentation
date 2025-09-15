@@ -142,7 +142,6 @@ def segmentation_step(config: DictConfig) -> np.ndarray | np.ndarray:
 
     return image, voxel_size
 
-
 def preprocessing_step(
     config: DictConfig, image: np.ndarray, k: np.ndarray
 ) -> np.ndarray:
@@ -172,7 +171,6 @@ def preprocessing_step(
         nrrd.write(os.path.join(config.path.results, config.path.filtered_ct), X)
 
     return X
-
 
 def CNN_A(
     config: DictConfig, 
@@ -222,7 +220,6 @@ def CNN_A(
     )
 
     return A_norm, A_norm_res, model_A, segmentation
-
 
 def CNN_B(
     config: DictConfig, 
@@ -357,7 +354,6 @@ def CNN_B(
 
     return B_norm, B_norm_res, model_B, min_coord
 
-
 def CNN_C(
     config: DictConfig,
     X: np.ndarray,
@@ -465,7 +461,6 @@ def final_step(
     config: DictConfig,
     X: np.ndarray,
     segmentation: np.ndarray,
-    min_coord: list,
     voxel_size: np.ndarray,
 ) -> None:
 
@@ -514,6 +509,7 @@ def final_step(
 
     # newImageData = X.astype(float)
 
+    # TODO: set this in a config file 
     marching.SetInputData(newImageData)
     marching.SetValue(0, -550)
     marching.Update()
@@ -608,6 +604,7 @@ def final_step(
                     )
 
         # Apply marching cubes algorithm
+        # TODO: set in config and reuse
         marching = vtk.vtkMarchingCubes()
         marching.SetInputData(newImageData)
         marching.SetValue(0, -550)
