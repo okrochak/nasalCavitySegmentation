@@ -8,6 +8,24 @@ hydra:
     dir: .
   output_subdir: null
 
+# Directory settings
+path:
+  base: "."  # sys.argv[1]
+  data: "data/input/reference/"
+  results: "data/output/"
+  voxel_size: "voxel_size.nrrd"
+  output: "CTraw.stl"
+  output_ext: "CTraw_ext.stl"
+  inlet_left: "inlet_left.nrrd"
+  inlet_right: "inlet_right.nrrd"
+  segmentation: "segmentation.nrrd"
+  dice: "dice.nrrd"
+  seg_dice: "seg_dice.nrrd"
+  ct: "ct_data.nrrd"
+  filtered_ct: "ct_data_filtered.nrrd"
+  span: "span.nrrd"
+  seg_ext: "seg_ext.nrrd"
+
 # Boundary extension settings
 boundary:
   # put as a separate dict
@@ -23,14 +41,9 @@ dicom:
   enable_series_number: True  # only parse DICOM files from a given series
   series_number: 5 
   use: True
-  ext_file: "ct_data.nrrd"  # only needed if use_dicom = False
-  ext_RS: 1  # only needed if use_dicom = False
-  ext_RI: 0  # only needed if use_dicom = False
-  VS_X: 0.326171875  # only needed if use_dicom = False
-  VS_Y: 0.326171875  # only needed if use_dicom = False
-  VS_Z: 0.7  # always needed !!!!!
+  VS_Z: 0.7  # always needed !!!!
 
-# External egmentation settings
+# External segmentation settings
 external:
   use: False
   name: "segmentation_initial_plan.nrrd"
@@ -41,24 +54,6 @@ outlet:
   out_c: [69.84113836288452, 96.89016723632812, 7.257740599237669] # outlet position
   out_n: [0, 0, -1.0]      
   z_dist_norm: 0.2   # Normalized by x bound of nasal cavity (L_x): z_dist_nor=z_dist/L_x=nr_sl_z*voxel_size[2]/L_x
-
-# Directory settings
-path:
-  base: "."  # sys.argv[1]
-  data: "data/input/dicom_test"
-  results: "data/output/"
-  voxel_size: "voxel_size.nrrd"
-  output: "CTraw.stl"
-  output_ext: "CTraw_ext.stl"
-  inlet_left: "inlet_left.nrrd"
-  inlet_right: "inlet_right.nrrd"
-  segmentation: "segmentation.nrrd"
-  dice: "dice.nrrd"
-  seg_dice: "seg_dice.nrrd"
-  ct: "ct_data.nrrd"
-  filtered_ct: "ct_data_filtered.nrrd"
-  span: "span.nrrd"
-  seg_ext: "seg_ext.nrrd"
 
 cnnA: # Data for normalization
   path: 'cnn/seg_A.h5'

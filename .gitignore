@@ -2,4 +2,5 @@
 .vscode
 .python-version
 main.log
-data
+data/
+__pycache__/
