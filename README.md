@@ -1,5 +1,7 @@
 # Nasal cavity segmentation pipeline
 
+CONTRIBUTORS: Dr. M. Rüttgers, O. Krochak.
+
 This pipeline was originally developed my Dr. Mario Rüttgers and other collaborators, based on the following publication:  
 Rüttgers, M., Waldmann, M., Schröder, W. et al.  
 A machine-learning-based method for automatizing lattice-Boltzmann simulations of respiratory flows.  
@@ -16,4 +18,5 @@ Please also make sure that the `vmtk` binary is included in the current path.
 
 Please use `config.yaml` file to input the necessary variables before running the pipeline, such as the path to the input computed tomography files (in .dicom format).
 Afterward, the pipeline can be executed by calling `uv run main.py` or `python main.py`. Several output files will be stored in the `output` folder, including the nasal cavity surface in `.stl` format. 
-A sample dataset can be provided to test the pipeline by request to `o.krochak@fz-juelich.de`. 
+A sample dataset is provided in `data.zip` to test the pipeline. 
+
