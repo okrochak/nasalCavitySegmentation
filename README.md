@@ -20,3 +20,6 @@ Please use `config.yaml` file to input the necessary variables before running th
 Afterward, the pipeline can be executed by calling `uv run main.py` or `python main.py`. Several output files will be stored in the `output` folder, including the nasal cavity surface in `.stl` format. 
 A sample dataset is provided in `data.zip` to test the pipeline. 
 
+## Disclaimer
+
+This pipeline is for research purposes only and the authors do not take any responsibility for medical analysis or judgement based off the resuluting nasal cavity surfaces. 
