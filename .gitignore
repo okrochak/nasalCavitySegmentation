@@ -6,4 +6,6 @@ data/*
 !data/input/
 !data/output/
 !data/input/reference.zip
-__pycache__/
+data/input/reference
+**/__pycache__/
+**/.DS_Store
