@@ -2,5 +2,8 @@
 .vscode
 .python-version
 main.log
-data/
+data/*
+!data/input/
+!data/output/
+!data/input/reference.zip
 __pycache__/
